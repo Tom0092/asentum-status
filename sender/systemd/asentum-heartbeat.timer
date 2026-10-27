@@ -1,0 +1,12 @@
+[Unit]
+Description=Asentum Status: heartbeat every 5 minutes
+
+[Timer]
+OnBootSec=2min
+# Keep this equal to the --interval you registered with (300 s here).
+OnUnitActiveSec=5min
+RandomizedDelaySec=20s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

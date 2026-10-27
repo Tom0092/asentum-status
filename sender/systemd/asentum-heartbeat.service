@@ -1,0 +1,36 @@
+[Unit]
+Description=Asentum Status: send one heartbeat
+Documentation=https://github.com/<owner>/asentum-status
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=asentum-hb
+Group=asentum-hb
+WorkingDirectory=/opt/asentum-status
+EnvironmentFile=/etc/asentum-heartbeat.env
+ExecStart=/usr/bin/node sender/heartbeat.mjs beat
+TimeoutStartSec=150
+# Exit 2 = stuck, 3 = rejected, 4 = RPC unreachable, 5 = failed in a block.
+# The unit shows as failed; the next timer run tries again.
+
+# Hardening: the sender only needs the network and its own state directory.
+StateDirectory=asentum-heartbeat
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native

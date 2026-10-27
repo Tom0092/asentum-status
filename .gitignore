@@ -1,0 +1,6 @@
+node_modules/
+keys/
+deploy-state.json
+heartbeat-state.json
+*.log
+.DS_Store

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Asentum testnet status</title>
+  <meta name="description" content="Community-run status page for the Asentum testnet: chain liveness from an on-chain canary and heartbeats sent by validator operators.">
+  <meta name="theme-color" content="#f4f6f8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#10151b" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2317202b'/%3E%3Cpath d='M5 18h5l3-9 5 15 3-8h6' fill='none' stroke='%23fff' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="preload" href="fonts/archivo-latin-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip" href="#operators">Skip to operators</a>
+
+  <header class="top wrap">
+    <a class="brand" href="./">Asentum testnet status</a>
+    <p class="updated" id="updated" aria-live="polite">Connecting to the testnet…</p>
+    <button class="theme" id="theme" type="button" aria-label="Switch color theme">Dark</button>
+  </header>
+
+  <main>
+    <section class="hero wrap" aria-labelledby="verdict" aria-busy="true" id="hero">
+      <p class="state" id="state"><span class="state-icon" aria-hidden="true"></span><span class="state-label">Checking</span></p>
+      <h1 id="verdict">Checking the testnet…</h1>
+      <p class="verdict-detail" id="verdict-detail">Reading the newest blocks and the canary contract.</p>
+
+      <figure class="chart pulse">
+        <figcaption>
+          <span class="chart-title">Blocks per minute</span>
+          <span class="chart-note" id="pulse-note">One bar per canary tick. A red mark is a minute in which the chain ran no scheduled job.</span>
+        </figcaption>
+        <div class="plot" id="pulse" tabindex="0" role="img" aria-label="Blocks per minute, last two hours"></div>
+        <details class="table-view">
+          <summary>Show as table</summary>
+          <div class="table-scroll" id="pulse-table"></div>
+        </details>
+      </figure>
+    </section>
+
+    <section class="kpis wrap" aria-label="The chain right now">
+      <dl class="kpi-row">
+        <div class="kpi"><dt>Newest block</dt><dd id="kpi-tip">–</dd><p class="kpi-sub" id="kpi-tip-sub"></p></div>
+        <div class="kpi"><dt>Finality lag</dt><dd id="kpi-lag">–</dd><p class="kpi-sub" id="kpi-lag-sub"></p></div>
+        <div class="kpi"><dt>Block time, last hour</dt><dd id="kpi-bt">–</dd><p class="kpi-sub" id="kpi-bt-sub"></p></div>
+        <div class="kpi"><dt>Validators signing</dt><dd id="kpi-val">–</dd><p class="kpi-sub" id="kpi-val-sub"></p></div>
+      </dl>
+    </section>
+
+    <section class="history wrap" aria-labelledby="history-title">
+      <h2 id="history-title">Last 48 hours</h2>
+      <div class="history-grid">
+        <figure class="chart">
+          <figcaption>
+            <span class="chart-title">Minutes without a canary tick, per hour</span>
+            <span class="chart-note">Zero is normal. Tall bars mark stalls.</span>
+          </figcaption>
+          <div class="plot" id="missed" tabindex="0" role="img" aria-label="Minutes without a canary tick per hour, last 48 hours"></div>
+          <details class="table-view">
+            <summary>Show as table</summary>
+            <div class="table-scroll" id="missed-table"></div>
+          </details>
+        </figure>
+        <figure class="chart">
+          <figcaption>
+            <span class="chart-title">Average block time, per hour</span>
+            <span class="chart-note">Seconds between blocks, measured by the canary.</span>
+          </figcaption>
+          <div class="plot" id="blocktime" tabindex="0" role="img" aria-label="Average block time per hour, last 48 hours"></div>
+          <details class="table-view">
+            <summary>Show as table</summary>
+            <div class="table-scroll" id="blocktime-table"></div>
+          </details>
+        </figure>
+      </div>
+      <h3>Stalls</h3>
+      <ol class="incidents" id="incidents" reversed></ol>
+    </section>
+
+    <section class="operators wrap" id="operators" aria-labelledby="operators-title">
+      <div class="section-head">
+        <h2 id="operators-title">Operators</h2>
+        <p class="section-note">Each operator's node sends a small heartbeat transaction every few minutes. If the network is fine but one heartbeat stops, that node has a problem.</p>
+      </div>
+      <div class="filters" role="group" aria-label="Filter operators">
+        <div class="segmented" id="filter">
+          <button type="button" data-filter="all" aria-pressed="true">All <span class="count" data-count="all"></span></button>
+          <button type="button" data-filter="ok" aria-pressed="false">Online <span class="count" data-count="ok"></span></button>
+          <button type="button" data-filter="late" aria-pressed="false">Late <span class="count" data-count="late"></span></button>
+          <button type="button" data-filter="offline" aria-pressed="false">Offline <span class="count" data-count="offline"></span></button>
+        </div>
+        <label class="search">
+          <span class="visually-hidden">Find an operator</span>
+          <input type="search" id="search" placeholder="Find by name or address" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <p class="banner" id="op-banner" hidden></p>
+      <div class="op-table-wrap">
+        <table class="op-table" id="op-table">
+          <thead>
+            <tr>
+              <th scope="col">Operator</th>
+              <th scope="col">Status</th>
+              <th scope="col">Last heartbeat</th>
+              <th scope="col" class="num">Latency</th>
+              <th scope="col">Uptime, 48 h</th>
+              <th scope="col">Validator</th>
+            </tr>
+          </thead>
+          <tbody id="op-body"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="op-empty" hidden></p>
+    </section>
+
+    <section class="join wrap" id="join" aria-labelledby="join-title">
+      <h2 id="join-title">Add your node</h2>
+      <p class="section-note">About ten minutes on the machine that runs your validator. You need Node.js 18 or newer and a little test ASE for fees.</p>
+      <ol class="steps">
+        <li>
+          <h3>Get the sender</h3>
+          <pre><code>git clone <span id="repo-url">https://github.com/&lt;owner&gt;/asentum-status</span>
+cd asentum-status &amp;&amp; npm ci --omit=dev</code></pre>
+        </li>
+        <li>
+          <h3>Create a heartbeat wallet</h3>
+          <p>Use a new wallet just for heartbeats, never your validator key.</p>
+          <pre><code>npm run hb -- keygen</code></pre>
+        </li>
+        <li>
+          <h3>Fund it</h3>
+          <p>Send it 0.1 test ASE. At today's fee of 1 wei per gas, that covers years of heartbeats.</p>
+        </li>
+        <li>
+          <h3>Register your node</h3>
+          <pre><code>npm run hb -- register my-node --interval 300 --validator ase1…</code></pre>
+        </li>
+        <li>
+          <h3>Start the timer</h3>
+          <p>The repository has a systemd service and timer that send one heartbeat every five minutes. The README has the details.</p>
+        </li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="foot wrap">
+    <p>A community project. Not run by or affiliated with the Asentum team.</p>
+    <p id="foot-data">This page has no server: it reads the chain directly from your browser.</p>
+    <ul class="foot-links" id="foot-links"></ul>
+  </footer>
+
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+</body>
+</html>

@@ -1,0 +1,28 @@
+{
+  "name": "asentum-status",
+  "version": "1.0.0",
+  "description": "Community status page for the Asentum testnet: validator heartbeats and an on-chain canary.",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "build:vendor": "esbuild scripts/vendor-entry.mjs --bundle --format=esm --minify --target=es2020 --outfile=site/vendor/asentum-sdk.js",
+    "keygen": "node scripts/keygen.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "hb": "node sender/heartbeat.mjs"
+  },
+  "dependencies": {
+    "@asentum/sdk": "0.2.0"
+  },
+  "devDependencies": {
+    "@chainsafe/ssz": "^0.15.1",
+    "@fontsource-variable/archivo": "^5.3.0",
+    "@noble/hashes": "^1.8.0",
+    "esbuild": "^0.25.12",
+    "ses": "^1.10.0"
+  }
+}
