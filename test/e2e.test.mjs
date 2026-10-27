@@ -96,6 +96,12 @@ test('deploy: registry and canary deployed, canary scheduled, config written, re
   node.advance(2000);
   assert.equal(canary.view('incidents').length, 1);
 
+  const check = await run('scripts/check.mjs', [], env);
+  assert.equal(check.code, 0, check.stdout + check.stderr);
+  assert.match(check.stdout, /Canary .*\n.*ticks, last .* ago/);
+  assert.match(check.stdout, /escrow left/);
+  assert.match(check.stdout, /All good\./);
+
   const txs = node.txLog.length;
   const again = await run('scripts/deploy.mjs', [], env);
   assert.equal(again.code, 0, again.stderr);

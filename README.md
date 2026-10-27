@@ -50,7 +50,7 @@ affected.
 contracts/   heartbeat-registry.js, canary.js   (deployed as plain JS source)
 site/        the status page (static; vendor/ holds the bundled @asentum/sdk)
 sender/      heartbeat.mjs CLI and systemd unit, timer and env example
-scripts/     keygen.mjs, deploy.mjs, shared helpers
+scripts/     keygen.mjs, deploy.mjs, check.mjs, shared helpers
 test/        SES test runtime, contract tests, mock node, end-to-end tests
 ```
 
@@ -132,6 +132,9 @@ npm run keygen                      # keys/deployer.json, git-ignored
 npm run deploy -- --repo https://github.com/<you>/asentum-status
 git add site/config.js && git commit -m "Point the page at the deployed contracts" && git push
 ```
+
+`npm run check` shows the chain, the canary's ticks and escrow, and the
+registry at any time.
 
 `deploy.mjs` deploys and initializes both contracts, schedules `canary.tick`
 every 60 s on the cron registry, records the job id on the canary and writes
