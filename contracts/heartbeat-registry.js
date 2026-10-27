@@ -1,12 +1,16 @@
-// Asentum Status: Heartbeat Registry (v1)
+// Asentum Status: Operator Registry (v1)
 //
-// Validator operators register once, then send a small "beat" transaction
-// every few minutes from the machine that runs their node. The registry keeps,
-// per operator: last beat, inclusion latency (block time minus the time the
-// sender signed the beat) and 48 hourly buckets for uptime charts.
+// Validator operators register once to put a public name on their validator.
+// Validators in the committee are tracked from their block signatures, so a
+// name is all they need (interval 0). Operators outside the committee, or who
+// want to check that their node's transaction path works, can also send a
+// small "beat" transaction every few minutes. The registry then keeps the last
+// beat, inclusion latency (block time minus the time the sender signed the
+// beat) and 48 hourly buckets for uptime charts.
 //
-// Anyone can register. The page at asentum-status reads everything through
-// free view calls. Names are public: the owner can remove abusive entries.
+// Anyone can register; a validator address can carry one name. The page at
+// asentum-status reads everything through free view calls. Names are public:
+// the owner can remove abusive entries.
 //
 // Runtime notes (Asentum JavaScript contracts):
 //   - storage holds strings only, so records are JSON.
@@ -50,11 +54,28 @@ function cleanName(name) {
   return n;
 }
 
+// 0 means "name only, no heartbeats".
 function cleanInterval(intervalSec) {
   const i = Number(intervalSec);
   assert(Number.isInteger(i), 'interval must be a whole number of seconds');
-  assert(i >= MIN_INTERVAL_S && i <= MAX_INTERVAL_S, 'interval must be 60 to 3600 seconds');
+  assert(i === 0 || (i >= MIN_INTERVAL_S && i <= MAX_INTERVAL_S), 'interval must be 0 (no heartbeats) or 60 to 3600 seconds');
   return i;
+}
+
+function requireSomething(interval, validator) {
+  assert(interval > 0 || validator, 'without heartbeats (interval 0) a registration needs a validator address');
+}
+
+// One name per validator: v:<validator> points at the registration that names it.
+function linkValidator(rec, validator) {
+  if (rec.validator === validator) return;
+  if (validator) {
+    const holder = storage.get('v:' + validator);
+    assert(!holder || holder === rec.addr, 'this validator already has a name');
+  }
+  if (rec.validator) storage.delete('v:' + rec.validator);
+  if (validator) storage.set('v:' + validator, rec.addr);
+  rec.validator = validator;
 }
 
 function cleanValidator(validator) {
@@ -110,6 +131,7 @@ function removeOp(addr) {
   storage.delete('o:' + rec.addr);
   storage.delete('nm:' + rec.name);
   storage.delete('h:' + rec.addr);
+  if (rec.validator) storage.delete('v:' + rec.validator);
   storage.set('n', String(n - 1));
   emit('Unregistered', { op: rec.addr, name: rec.name });
 }
@@ -122,14 +144,16 @@ function removeOp(addr) {
     storage.set('n', '0');
   },
 
-  // name: public label; intervalSec: how often you will beat (60-3600);
-  // validator: optional address of the validator you operate (shown on the page).
+  // name: public label.
+  // intervalSec: 0 for a name only, or how often you will beat (60-3600).
+  // validator: the validator you operate (required when intervalSec is 0).
   register(name, intervalSec, validator) {
     assert(storage.has('owner'), 'not initialized');
     const me = msg.sender;
     const n = cleanName(name);
     const interval = cleanInterval(intervalSec);
     const val = cleanValidator(validator);
+    requireSomething(interval, val);
     assert(!storage.has('o:' + me), 'this address is already registered');
     assert(!storage.has('nm:' + n), 'name is taken');
     const idx = count();
@@ -138,7 +162,7 @@ function removeOp(addr) {
     const rec = {
       addr: me,
       name: n,
-      validator: val,
+      validator: '',
       interval,
       joined: Number(chain.blockTimestamp),
       last: 0,
@@ -148,6 +172,7 @@ function removeOp(addr) {
       ver: '',
       idx,
     };
+    linkValidator(rec, val);
     writeJson('o:' + me, rec);
     storage.set('nm:' + n, me);
     storage.set('i:' + idx, me);
@@ -160,8 +185,11 @@ function removeOp(addr) {
   update(intervalSec, validator) {
     const rec = readOp(msg.sender);
     assert(rec, 'not registered');
-    rec.interval = cleanInterval(intervalSec);
-    rec.validator = cleanValidator(validator);
+    const interval = cleanInterval(intervalSec);
+    const val = cleanValidator(validator);
+    requireSomething(interval, val);
+    rec.interval = interval;
+    linkValidator(rec, val);
     writeJson('o:' + rec.addr, rec);
     return rec;
   },
@@ -171,6 +199,7 @@ function removeOp(addr) {
   beat(sentAt, version) {
     const rec = readOp(msg.sender);
     assert(rec, 'not registered');
+    assert(rec.interval > 0, 'heartbeats are off for this registration (interval 0); set an interval with update first');
     const now = Number(chain.blockTimestamp);
     assert(rec.last === 0 || now - rec.last >= MIN_GAP_MS, 'heartbeat too frequent');
 
@@ -235,6 +264,11 @@ function removeOp(addr) {
 
   getByName(name) {
     const addr = storage.get('nm:' + String(name).trim().toLowerCase());
+    return addr ? withHistory(readOp(addr)) : null;
+  },
+
+  getByValidator(validator) {
+    const addr = storage.get('v:' + String(validator).toLowerCase());
     return addr ? withHistory(readOp(addr)) : null;
   },
 

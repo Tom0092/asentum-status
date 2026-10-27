@@ -104,7 +104,7 @@ async function main() {
 
   // 1. Heartbeat registry
   const registry = await deployContract(wallet, 'registry', 'contracts/heartbeat-registry.js');
-  await initOnce(wallet, registry, 'info', [], 'the heartbeat registry');
+  await initOnce(wallet, registry, 'info', [], 'the operator registry');
 
   // 2. Canary
   const canary = await deployContract(wallet, 'canary', 'contracts/canary.js');
@@ -169,7 +169,7 @@ async function main() {
   const cs = await view(canary, 'status');
   log('');
   log('Done.');
-  log(`  Heartbeat registry  ${registry}  (${info.operators} operators)`);
+  log(`  Operator registry   ${registry}  (${info.operators} operators)`);
   log(`  Canary              ${canary}  (cron job ${cs.job}, ${cs.ticks} ticks so far)`);
   log(`  Page config         ${CONFIG}`);
   log('');

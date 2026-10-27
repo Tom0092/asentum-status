@@ -83,24 +83,26 @@ export function createDemoSource() {
     };
   }
 
+  // val: the validator's state in signatures; interval 0 = name only.
   const OPS = [
-    { name: 'bavaria-1', n: 0xb1, interval: 300, lastAgo: 95e3, joinedAgo: 60 * HOUR, lat: 2600, gaps: [] },
-    { name: 'nordlicht', n: 0xb2, interval: 300, lastAgo: 210e3, joinedAgo: 60 * HOUR, lat: 3100, gaps: [[30 * HOUR, 29.7 * HOUR]] },
-    { name: 'pi4-garage', n: 0xb3, interval: 300, lastAgo: 19 * MIN, joinedAgo: 40 * HOUR, lat: 5400, gaps: [[19 * MIN, 0]] },
-    { name: 'oslo-val', n: 0xb4, interval: 120, lastAgo: 50e3, joinedAgo: 70 * HOUR, lat: 2200, gaps: [] },
-    { name: 'helsinki-02', n: 0xb5, interval: 300, lastAgo: 3.2 * HOUR, joinedAgo: 70 * HOUR, lat: 2900, gaps: [[3.2 * HOUR, 0]] },
-    { name: 'lisbon-node', n: 0xb6, interval: 600, lastAgo: 4 * MIN, joinedAgo: 9 * HOUR, lat: 2700, gaps: [[6 * HOUR, 4 * HOUR]] },
-    { name: 'tokyo-edge', n: 0xb7, interval: 300, lastAgo: null, joinedAgo: 6 * MIN, lat: -1, gaps: [] },
+    { name: 'bavaria-1', n: 0xb1, val: 'signing', interval: 300, lastAgo: 95e3, joinedAgo: 60 * HOUR, lat: 2600, gaps: [] },
+    { name: 'nordlicht', n: 0xb2, val: 'signing', interval: 0 },
+    { name: 'frankfurt-pq', n: 0xb8, val: 'missing', interval: 0 },
+    { name: 'pi4-garage', n: 0xb3, val: 'dormant', interval: 300, lastAgo: 19 * MIN, joinedAgo: 40 * HOUR, lat: 5400, gaps: [[19 * MIN, 0]] },
+    { name: 'oslo-val', n: 0xb4, val: 'signing', interval: 120, lastAgo: 50e3, joinedAgo: 70 * HOUR, lat: 2200, gaps: [] },
+    { name: 'helsinki-02', n: 0xb5, val: 'idle', interval: 300, lastAgo: 3.2 * HOUR, joinedAgo: 70 * HOUR, lat: 2900, gaps: [[3.2 * HOUR, 0]] },
+    { name: 'lisbon-node', n: 0xb6, val: 'dormant', interval: 600, lastAgo: 4 * MIN, joinedAgo: 9 * HOUR, lat: 2700, gaps: [[6 * HOUR, 4 * HOUR]] },
+    { name: 'tokyo-edge', n: 0xb7, val: null, interval: 300, lastAgo: null, joinedAgo: 6 * MIN, lat: -1, gaps: [] },
   ];
 
   function operators(now) {
     return OPS.map((o, idx) => {
       const r = rng(o.n);
-      const joined = now - o.joinedAgo;
-      const iv = o.interval * 1000;
+      const joined = now - (o.joinedAgo || 20 * HOUR);
       const hist = new Map();
       let beats = 0;
-      if (o.lastAgo !== null) {
+      if (o.interval && o.lastAgo !== null) {
+        const iv = o.interval * 1000;
         for (let t = joined + iv; t <= now - o.lastAgo; t += iv) {
           const ago = now - t;
           if (o.gaps.some(([a, b]) => ago <= a && ago > b)) continue;
@@ -115,39 +117,77 @@ export function createDemoSource() {
           beats += 1;
         }
       }
+      const beating = o.interval && o.lastAgo !== null;
       const minHour = Math.floor(now / HOUR) - 47;
       return {
         addr: hex(0xab0000 + o.n),
         name: o.name,
-        validator: idx === 6 ? '' : hex(0xfa0000 + o.n),
+        validator: o.val ? hex(0xfa0000 + o.n) : '',
         interval: o.interval,
         joined,
-        last: o.lastAgo === null ? 0 : now - o.lastAgo,
-        lastBlock: o.lastAgo === null ? 0 : tipAt(now - o.lastAgo),
+        last: beating ? now - o.lastAgo : 0,
+        lastBlock: beating ? tipAt(now - o.lastAgo) : 0,
         beats,
-        lat: o.lastAgo === null ? -1 : o.lat,
-        ver: 'asentum-status/1.0.0',
+        lat: beating ? o.lat : -1,
+        ver: beating ? 'asentum-status/1.0.0' : '',
         idx,
         hist: [...hist.values()].filter((b) => b[0] >= minHour),
       };
     });
   }
 
-  function participation(now) {
+  // About 240 bonded validators: the top 100 by stake sit in the committee.
+  function validatorSet(now) {
     const r = rng(99);
-    const validators = [];
-    const statusFor = { 0xb5: 'dormant', 0xb3: 'idle' };
-    for (let i = 0; i < 238; i++) {
+    const head = tipAt(now);
+    const ase = (n) => (BigInt(Math.round(n)) * 10n ** 18n).toString();
+    const list = [];
+    const entry = (address, kind, stake) => {
+      const seated = kind !== 'dormant';
+      const last = kind === 'signing' || kind === 'missing' ? head - Math.floor(r() * 3) : kind === 'idle' ? head - 300 - Math.floor(r() * 500) : null;
+      list.push({
+        v: {
+          address,
+          stake: ase(stake),
+          signedBlocks: seated ? Math.round(1000 * (kind === 'idle' ? 0.4 : 0.97)) : 0,
+          participationRatio: kind === 'signing' ? 0.95 + r() * 0.05 : kind === 'missing' ? 0.88 : kind === 'idle' ? 0.41 : 0,
+          lastSignedBlock: last === null ? null : String(last),
+          status: kind === 'missing' ? 'signing' : kind,
+        },
+        misses: kind === 'missing' ? 4 : kind === 'idle' ? 0 : 0,
+        seated,
+      });
+    };
+    for (let i = 0; i < 232; i++) {
+      const seated = i < 94;
       const roll = r();
-      const status = roll < 0.86 ? 'signing' : roll < 0.95 ? 'idle' : 'dormant';
-      validators.push({ address: hex(0xee0000 + i), stake: '0', signedBlocks: 0, participationRatio: status === 'signing' ? 0.9 + r() * 0.1 : r() * 0.3, lastSignedBlock: null, status });
+      const kind = !seated ? 'dormant' : roll < 0.93 ? 'signing' : roll < 0.97 ? 'idle' : 'missing';
+      entry(hex(0xee0000 + i), kind, seated ? 1400 + (94 - i) * 180 + r() * 90 : 500 + r() * 840);
     }
-    for (const o of OPS.slice(0, 6)) {
-      const status = statusFor[o.n] || 'signing';
-      validators.push({ address: hex(0xfa0000 + o.n), stake: '0', signedBlocks: 0, participationRatio: status === 'signing' ? 0.97 : status === 'idle' ? 0.41 : 0, lastSignedBlock: null, status });
+    for (const o of OPS) {
+      if (!o.val) continue;
+      const stake = o.val === 'dormant' ? 620 + r() * 300 : 2400 + r() * 6000;
+      entry(hex(0xfa0000 + o.n), o.val, stake);
     }
+    return { head, list };
+  }
+
+  function participation(now) {
+    const { head, list } = validatorSet(now);
+    const validators = list.map((x) => x.v);
     const count = (s) => validators.filter((v) => v.status === s).length;
-    return { head: String(tipAt(now)), scannedFrom: '0', lookback: 1000, totalValidators: validators.length, signing: count('signing'), idle: count('idle'), dormant: count('dormant'), recentWindow: 100, validators };
+    return { head: String(head), scannedFrom: String(head - 1000), lookback: 1000, totalValidators: validators.length, signing: count('signing'), idle: count('idle'), dormant: count('dormant'), recentWindow: 100, validators };
+  }
+
+  function liveness(now) {
+    const { head, list } = validatorSet(now);
+    return {
+      head: String(head),
+      livenessWindow: '100',
+      maxConsecutiveMisses: 50,
+      baked: [],
+      tracked: list.filter((x) => x.seated).map((x) => ({ address: x.v.address, lastVotedHeight: x.v.lastSignedBlock, consecutiveMisses: x.misses, baked: false })),
+    };
   }
 
   const wait = (v) => new Promise((res) => setTimeout(() => res(v), 120));
@@ -165,5 +205,6 @@ export function createDemoSource() {
     canary: () => wait(canary(Date.now())),
     operators: () => wait(operators(Date.now())),
     participation: () => wait(participation(Date.now())),
+    liveness: () => wait(liveness(Date.now())),
   };
 }

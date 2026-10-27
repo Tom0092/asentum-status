@@ -1,4 +1,4 @@
-import { AsentumClient, toAse1, shortAse1 } from './vendor/asentum-sdk.js';
+import { AsentumClient, toAse1, shortAse1, formatAse } from './vendor/asentum-sdk.js';
 import CONFIG from './config.js';
 import { createDemoSource } from './demo.js';
 
@@ -69,6 +69,7 @@ function chainSource() {
       return items;
     },
     participation: () => client.getParticipation({ lookback: 1000 }),
+    liveness: () => client.getLiveness(),
   };
 }
 
@@ -80,6 +81,7 @@ const state = {
   canary: null,
   ops: null,
   part: null,
+  live: null,
   errors: {},
   updatedAt: 0,
   loadedOnce: false,
@@ -219,7 +221,7 @@ function verdict(now) {
 }
 
 function opStatus(op, now) {
-  if (!op.last) return { key: 'waiting', level: 'neutral', label: 'Waiting', rank: 2 };
+  if (!op.last) return { key: 'waiting', level: 'neutral', label: 'Waiting for the first beat', rank: 2 };
   const age = now - op.last;
   const iv = (Number(op.interval) || 300) * 1000;
   if (age <= 2 * iv + MIN) return { key: 'ok', level: 'good', label: 'Online', rank: 3 };
@@ -761,141 +763,195 @@ function renderKpis(now) {
   }
 }
 
-// ---------------------------------------------------------------- operators
+// ---------------------------------------------------------------- validators
 
+const PAGE_SIZE = 25;
 let filter = 'all';
 let query = '';
+let showCount = PAGE_SIZE;
 
-function renderOperators(now, networkLevel) {
+const RANK = { critical: 0, warning: 1, good: 2, neutral: 3 };
+
+// Status from the validator's own signatures (node data, nothing to install).
+function signingStatus(v, live) {
+  const p = state.part;
+  if (!v) return { key: 'none', level: 'neutral', label: 'Not in the validator set', sub: 'This address is not bonded' };
+  const misses = Number(live?.consecutiveMisses) || 0;
+  const maxMisses = Number(state.live?.maxConsecutiveMisses) || 0;
+  const pct = `${Math.round((Number(v.participationRatio) || 0) * 100)} % of the last ${fmtInt(p?.lookback || 1000)} blocks`;
+  if (v.status === 'dormant') return { key: 'outside', level: 'neutral', label: 'Outside the committee', sub: 'Syncs, but signs nothing, so there is no signal' };
+  if (maxMisses && misses >= maxMisses) return { key: 'problem', level: 'critical', label: 'Not voting', sub: `${fmtInt(misses)} votes missed in a row` };
+  if (v.status === 'idle') return { key: 'problem', level: 'warning', label: 'Idle', sub: `No signature in the last ${fmtInt(p?.recentWindow || 100)} blocks` };
+  if (misses > 0) return { key: 'problem', level: 'warning', label: 'Missing votes', sub: `${fmtInt(misses)} missed in a row, ${pct}` };
+  if (v.status === 'signing') return { key: 'signing', level: 'good', label: 'Signing', sub: pct };
+  return { key: 'other', level: 'neutral', label: String(v.status || 'Unknown'), sub: pct };
+}
+
+function buildRows(now) {
+  const ops = state.ops || [];
+  const liveMap = new Map((state.live?.tracked || []).map((e) => [toAse1(e.address), e]));
+  const opByValidator = new Map(ops.filter((o) => o.validator).map((o) => [toAse1(o.validator), o]));
+  const rows = [];
+  const placed = new Set();
+  const make = (address, v, op) => {
+    const sig = v || op?.validator ? signingStatus(v, v ? liveMap.get(address) : null) : null;
+    const hb = op && Number(op.interval) > 0 ? opStatus(op, now) : null;
+    const rank = Math.min(sig ? RANK[sig.level] : 9, hb ? RANK[hb.level] : 9);
+    return { address, v, op, sig, hb, rank, stake: v ? BigInt(v.stake || '0') : 0n };
+  };
+  for (const v of state.part?.validators || []) {
+    const a = toAse1(v.address);
+    const op = opByValidator.get(a);
+    if (op) placed.add(op.addr);
+    rows.push(make(a, v, op));
+  }
+  for (const op of ops) {
+    if (!placed.has(op.addr)) rows.push(make(op.validator ? toAse1(op.validator) : '', null, op));
+  }
+  return rows.sort(
+    (a, b) =>
+      a.rank - b.rank ||
+      Number(Boolean(b.op)) - Number(Boolean(a.op)) ||
+      (b.stake > a.stake ? 1 : b.stake < a.stake ? -1 : 0) ||
+      (a.op?.name || a.address).localeCompare(b.op?.name || b.address),
+  );
+}
+
+const FILTERS = {
+  all: () => true,
+  problems: (r) => r.rank <= 1,
+  signing: (r) => r.sig?.key === 'signing',
+  outside: (r) => r.sig?.key === 'outside',
+  named: (r) => Boolean(r.op),
+};
+
+function cell(tr, cls, label) {
+  const td = tr.insertCell();
+  if (cls) td.className = cls;
+  if (label) td.dataset.label = label;
+  return td;
+}
+
+function sub(text) {
+  const s = document.createElement('span');
+  s.className = 'op-sub';
+  if (text) s.textContent = text;
+  return s;
+}
+
+function heartbeatCell(td, op, hb, now, hours) {
+  if (!op) {
+    td.textContent = '–';
+    td.classList.add('is-empty');
+    return;
+  }
+  if (!hb) {
+    td.append(statusEl('neutral', 'Name only'), sub('No heartbeats sent'));
+    return;
+  }
+  td.append(statusEl(hb.level, hb.label));
+  const L = opLatency(op);
+  const parts = [op.last ? fmtAgo(now - op.last) : 'none yet', `every ${fmtDur(op.interval * 1000)}`];
+  if (L.last !== null) parts.push(`latency ${fmtSec(L.last)}`);
+  td.append(sub(parts.join(', ')));
+
+  const U = opUptime(op, now, hours);
+  const wrap = document.createElement('div');
+  wrap.className = 'uptime';
+  const pct = document.createElement('span');
+  pct.className = 'uptime-pct';
+  pct.textContent = U.pct === null || !op.last ? '–' : `${U.pct >= 99.95 ? '100' : U.pct.toFixed(1)} %`;
+  const cells = document.createElement('div');
+  cells.className = 'cells';
+  cells.setAttribute('role', 'img');
+  cells.setAttribute('aria-label', `Heartbeats per hour, last ${hours} hours`);
+  for (const c of U.cells) {
+    const s = document.createElement('span');
+    s.dataset.l = String(c.level);
+    s.title = c.level === 'x' ? `${fmtClock(c.h * HOUR)}: not registered yet` : `${fmtClock(c.h * HOUR)}: ${c.beats} of ${c.expected} heartbeats`;
+    cells.append(s);
+  }
+  wrap.append(pct, cells);
+  td.append(wrap);
+}
+
+function renderValidators(now, networkLevel) {
   const body = $('op-body');
   const empty = $('op-empty');
   const banner = $('op-banner');
+  const more = $('op-more');
   body.textContent = '';
 
   banner.hidden = networkLevel !== 'critical';
-  banner.textContent = 'The network itself is stalled, so no heartbeat can land. Late or offline operators below reflect that, not their nodes.';
+  banner.textContent = 'The network itself is stalled, so nobody can sign and no heartbeat can land. The statuses below reflect that, not the nodes.';
 
-  if (!cfg.registry && !cfg.demo) {
+  if (!state.part && !state.ops) {
     empty.hidden = false;
-    empty.textContent = 'No heartbeat registry configured yet.';
-    return;
-  }
-  if (!state.ops) {
-    empty.hidden = false;
-    empty.textContent = state.errors.ops ? `Couldn't load operators: ${state.errors.ops.message}` : 'Loading operators…';
+    more.hidden = true;
+    empty.textContent = state.errors.part ? `Couldn't load validators: ${state.errors.part.message}` : 'Loading validators…';
     return;
   }
 
   const narrow = window.matchMedia('(max-width: 760px)').matches;
   const hours = narrow ? 24 : 48;
-  const partMap = new Map((state.part?.validators || []).map((v) => [toAse1(v.address), v]));
-  const rows = state.ops.map((op) => ({ op, st: opStatus(op, now) }));
-  const counts = { all: rows.length, ok: 0, late: 0, offline: 0 };
-  rows.forEach((r) => {
-    if (r.st.key in counts) counts[r.st.key] += 1;
-  });
+  const rows = buildRows(now);
   document.querySelectorAll('[data-count]').forEach((n) => {
-    n.textContent = fmtInt(counts[n.dataset.count] || 0);
+    n.textContent = fmtInt(rows.filter(FILTERS[n.dataset.count] || FILTERS.all).length);
   });
 
   const q = query.trim().toLowerCase();
-  const shown = rows
-    .filter((r) => filter === 'all' || r.st.key === filter)
-    .filter((r) => !q || r.op.name.includes(q) || toAse1(r.op.addr).includes(q) || r.op.addr.includes(q))
-    .sort((a, b) => a.st.rank - b.st.rank || a.op.name.localeCompare(b.op.name));
+  const matches = rows
+    .filter(FILTERS[filter] || FILTERS.all)
+    .filter((r) => !q || (r.op?.name || '').includes(q) || r.address.includes(q) || (r.op && toAse1(r.op.addr).includes(q)));
+  const shown = matches.slice(0, showCount);
 
-  empty.hidden = shown.length > 0;
-  if (!rows.length) {
-    empty.textContent = 'No operators yet. Add your node with the steps below; it takes about ten minutes.';
-  } else if (!shown.length) {
-    empty.textContent = 'No operator matches this filter.';
-  }
+  empty.hidden = matches.length > 0;
+  if (!rows.length) empty.textContent = 'No validators found yet.';
+  else if (!matches.length) empty.textContent = 'No validator matches this filter.';
+  more.hidden = matches.length <= shown.length;
+  more.textContent = `Show ${fmtInt(Math.min(PAGE_SIZE, matches.length - shown.length))} more of ${fmtInt(matches.length - shown.length)}`;
 
-  for (const { op, st } of shown) {
+  const blockMs = recentBlockTime()?.ms || 2400;
+  const head = state.heads?.tip ?? (Number(state.part?.head) || 0);
+
+  for (const r of shown) {
     const tr = body.insertRow();
 
-    const name = tr.insertCell();
-    name.className = 'c-name';
-    const nm = document.createElement('span');
-    nm.className = 'op-name';
-    nm.textContent = op.name;
-    const addr = explorerLink(op.addr);
-    addr.classList.add('op-addr');
-    name.append(nm, addr);
-
-    const status = tr.insertCell();
-    status.className = 'c-status';
-    status.append(statusEl(st.level, st.label));
-
-    const last = tr.insertCell();
-    last.dataset.label = 'Last heartbeat';
-    if (op.last) {
-      last.textContent = fmtAgo(now - op.last);
-      const sub = document.createElement('span');
-      sub.className = 'op-sub';
-      sub.textContent = `every ${fmtDur(op.interval * 1000)}, ${fmtInt(op.beats)} so far`;
-      last.append(sub);
-    } else {
-      last.textContent = 'None yet';
-    }
-
-    const lat = tr.insertCell();
-    lat.className = 'num';
-    lat.dataset.label = 'Latency';
-    const L = opLatency(op);
-    lat.textContent = L.last !== null ? fmtSec(L.last) : '–';
-    if (L.avg !== null) {
-      const sub = document.createElement('span');
-      sub.className = 'op-sub';
-      sub.textContent = `avg ${fmtSec(L.avg)}`;
-      lat.append(sub);
-    }
-
-    const up = tr.insertCell();
-    up.className = 'c-uptime';
-    up.dataset.label = `Uptime, ${hours} h`;
-    const U = opUptime(op, now, hours);
-    const wrap = document.createElement('div');
-    wrap.className = 'uptime';
-    const pct = document.createElement('span');
-    pct.className = 'uptime-pct';
-    pct.textContent = U.pct === null || !op.last ? '–' : `${U.pct >= 99.95 ? '100' : U.pct.toFixed(1)} %`;
-    const cells = document.createElement('div');
-    cells.className = 'cells';
-    cells.setAttribute('role', 'img');
-    cells.setAttribute('aria-label', `Heartbeats per hour, last ${hours} hours`);
-    for (const c of U.cells) {
-      const s = document.createElement('span');
-      s.dataset.l = String(c.level);
-      s.title = c.level === 'x' ? `${fmtClock(c.h * HOUR)}: not registered yet` : `${fmtClock(c.h * HOUR)}: ${c.beats} of ${c.expected} heartbeats`;
-      cells.append(s);
-    }
-    wrap.append(pct, cells);
-    up.append(wrap);
-
-    const val = tr.insertCell();
-    val.className = 'c-val';
-    val.dataset.label = 'Validator';
-    if (op.validator) {
-      const entry = partMap.get(toAse1(op.validator));
-      if (entry) {
-        const lvl = entry.status === 'signing' ? 'good' : entry.status === 'idle' ? 'warning' : 'critical';
-        val.append(statusEl(lvl, entry.status === 'signing' ? 'Signing' : entry.status === 'idle' ? 'Idle' : 'Dormant'));
-        const sub = document.createElement('span');
-        sub.className = 'op-sub';
-        sub.textContent = `${Math.round((entry.participationRatio || 0) * 100)} % of recent blocks, `;
-        sub.append(explorerLink(op.validator));
-        val.append(sub);
-      } else {
-        val.append(statusEl('neutral', state.part ? 'Not in the validator set' : 'Checking'));
-        const sub = document.createElement('span');
-        sub.className = 'op-sub';
-        sub.append(explorerLink(op.validator));
-        val.append(sub);
+    const who = cell(tr, 'c-name');
+    if (r.op) {
+      const nm = document.createElement('span');
+      nm.className = 'op-name';
+      nm.textContent = r.op.name;
+      who.append(nm);
+      if (r.address) {
+        const link = explorerLink(r.address);
+        link.classList.add('op-addr');
+        who.append(link);
       }
     } else {
-      val.textContent = '–';
+      const link = explorerLink(r.address);
+      link.classList.add('op-name', 'op-anon');
+      who.append(link);
     }
+    if (r.v) who.append(sub(`${fmtInt(Number(formatAse(r.v.stake || '0')))} ASE staked`));
+    else if (r.op && !r.op.validator) who.append(sub('No validator given'));
+
+    const sig = cell(tr, 'c-status');
+    if (r.sig) sig.append(statusEl(r.sig.level, r.sig.label), sub(r.sig.sub));
+    else sig.textContent = '–';
+
+    const last = cell(tr, '', 'Last signature');
+    const lsb = r.v && r.v.lastSignedBlock !== null && r.v.lastSignedBlock !== undefined ? Number(r.v.lastSignedBlock) : null;
+    if (r.sig?.key === 'outside' || lsb === null || !head) {
+      last.textContent = r.v && r.sig?.key !== 'outside' && lsb === null ? `None in ${fmtInt(state.part?.lookback || 1000)} blocks` : '–';
+      if (last.textContent === '–') last.classList.add('is-empty');
+    } else {
+      const blocks = Math.max(0, head - lsb);
+      last.textContent = blocks <= 1 ? 'just now' : fmtAgo(blocks * blockMs);
+      last.append(sub(`block #${fmtInt(lsb)}`));
+    }
+
+    heartbeatCell(cell(tr, 'c-hb', 'Heartbeat'), r.op, r.hb, now, hours);
   }
 }
 
@@ -911,7 +967,7 @@ function renderChrome() {
     li.append(s, node);
     links.append(li);
   };
-  if (cfg.registry) add('Heartbeat registry', explorerLink(cfg.registry));
+  if (cfg.registry) add('Operator registry', explorerLink(cfg.registry));
   if (cfg.canary) add('Canary', explorerLink(cfg.canary));
   const rpc = document.createElement('span');
   rpc.textContent = new URL(cfg.rpc).host;
@@ -946,7 +1002,7 @@ function renderAll() {
   renderMissed(now);
   renderBlockTime(now);
   renderIncidents();
-  renderOperators(now, v.level);
+  renderValidators(now, v.level);
   renderUpdated(now);
 }
 
@@ -971,7 +1027,7 @@ async function poll() {
   clearTimeout(timer);
   const jobs = [load('heads', source.heads), load('chain', source.chainInfo), load('canary', source.canary)];
   if (round % 3 === 0) jobs.push(load('ops', source.operators));
-  if (round % 12 === 0) jobs.push(load('part', source.participation));
+  if (round % 6 === 0) jobs.push(load('part', source.participation), load('live', source.liveness));
   round += 1;
   document.querySelectorAll('.plot').forEach((p) => p.classList.add('refreshing'));
   await Promise.allSettled(jobs);
@@ -997,13 +1053,20 @@ $('filter').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-filter]');
   if (!btn) return;
   filter = btn.dataset.filter;
+  showCount = PAGE_SIZE;
   document.querySelectorAll('#filter button').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
-  renderOperators(source.now(), verdict(source.now()).level);
+  renderValidators(source.now(), verdict(source.now()).level);
 });
 
 $('search').addEventListener('input', (e) => {
   query = e.target.value;
-  renderOperators(source.now(), verdict(source.now()).level);
+  showCount = PAGE_SIZE;
+  renderValidators(source.now(), verdict(source.now()).level);
+});
+
+$('op-more').addEventListener('click', () => {
+  showCount += PAGE_SIZE;
+  renderValidators(source.now(), verdict(source.now()).level);
 });
 
 const root = document.documentElement;

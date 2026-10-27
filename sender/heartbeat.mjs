@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-// Asentum Status heartbeat sender.
+// Asentum Status operator tool: name your validator, optionally send heartbeats.
 //
 //   node sender/heartbeat.mjs keygen [--force]
 //   node sender/heartbeat.mjs address
+//   node sender/heartbeat.mjs register <name> --validator ase1... --no-heartbeat   (name only)
 //   node sender/heartbeat.mjs register <name> [--interval 300] [--validator ase1...]
-//   node sender/heartbeat.mjs update [--interval 300] [--validator ase1...|none]
+//   node sender/heartbeat.mjs update [--interval 300 | --no-heartbeat] [--validator ase1...|none]
 //   node sender/heartbeat.mjs beat          (what the systemd timer runs)
 //   node sender/heartbeat.mjs status
 //   node sender/heartbeat.mjs unregister
@@ -36,6 +37,7 @@ const { positionals, values: opt } = parseArgs({
   options: {
     interval: { type: 'string' },
     validator: { type: 'string' },
+    'no-heartbeat': { type: 'boolean', default: false },
     force: { type: 'boolean', default: false },
   },
 });
@@ -63,9 +65,14 @@ async function registryAddress() {
   return cfg.registry;
 }
 
+// 0 = name only (no heartbeats).
 function intervalArg(fallback) {
+  if (opt['no-heartbeat']) {
+    if (opt.interval !== undefined) throw new Exit(1, 'use either --interval or --no-heartbeat');
+    return 0;
+  }
   const v = opt.interval === undefined ? fallback : Number(opt.interval);
-  if (!Number.isInteger(v) || v < 60 || v > 3600) throw new Exit(1, '--interval must be 60 to 3600 seconds');
+  if (!Number.isInteger(v) || (v !== 0 && (v < 60 || v > 3600))) throw new Exit(1, '--interval must be 60 to 3600 seconds (or use --no-heartbeat)');
   return v;
 }
 
@@ -141,13 +148,17 @@ const commands = {
 
   async register() {
     const name = rest[0];
-    if (!name) throw new Exit(1, 'usage: register <name> [--interval 300] [--validator ase1...]');
+    if (!name) throw new Exit(1, 'usage: register <name> --validator ase1... [--no-heartbeat | --interval 300]');
+    const interval = intervalArg(300);
+    const validator = validatorArg('');
+    if (!interval && !validator) throw new Exit(1, '--no-heartbeat needs --validator: a name has to point at something');
     const registry = await registryAddress();
     const w = loadWallet(client, KEYFILE);
-    const { r } = await send(registry, w, 'register', [name, intervalArg(300), validatorArg('')]);
+    const { r } = await send(registry, w, 'register', [name, interval, validator]);
     const rec = parseReturn(r.returnValue) || {};
     console.log(`Registered "${rec.name || name}" from ${w.address} in block ${r.blockNumber}.`);
-    console.log('Now send heartbeats: run "beat" once to test, then enable the systemd timer.');
+    if (interval) console.log('Now send heartbeats: run "beat" once to test, then enable the systemd timer.');
+    else console.log('Done. The name shows on the status page next to your validator.');
   },
 
   async update() {
@@ -155,8 +166,11 @@ const commands = {
     const w = loadWallet(client, KEYFILE);
     const cur = parseReturn(await client.view(registry, 'getOperator', [w.address]));
     if (!cur) throw new Exit(1, `${w.address} is not registered`);
-    await send(registry, w, 'update', [intervalArg(cur.interval), validatorArg(cur.validator)]);
-    console.log('Updated.');
+    const interval = intervalArg(cur.interval);
+    const validator = validatorArg(cur.validator);
+    if (!interval && !validator) throw new Exit(1, 'without heartbeats the registration needs a validator');
+    await send(registry, w, 'update', [interval, validator]);
+    console.log(`Updated: ${interval ? `heartbeat every ${interval} s` : 'name only'}${validator ? `, validator ${validator}` : ''}.`);
   },
 
   async beat() {
@@ -218,7 +232,7 @@ const commands = {
     const age = op.last ? `${Math.round((Date.now() - op.last) / 1000)} s ago` : 'never';
     console.log(`name       ${op.name}`);
     console.log(`address    ${w.address}`);
-    console.log(`interval   ${op.interval} s`);
+    console.log(`heartbeat  ${op.interval ? `every ${op.interval} s` : 'off (name only)'}`);
     console.log(`validator  ${op.validator || '-'}`);
     console.log(`beats      ${op.beats}`);
     console.log(`last beat  ${age} (block ${op.lastBlock})`);

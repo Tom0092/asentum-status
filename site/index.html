@@ -81,18 +81,19 @@
 
     <section class="operators wrap" id="operators" aria-labelledby="operators-title">
       <div class="section-head">
-        <h2 id="operators-title">Operators</h2>
-        <p class="section-note">Each operator's node sends a small heartbeat transaction every few minutes. If the network is fine but one heartbeat stops, that node has a problem.</p>
+        <h2 id="operators-title">Validators</h2>
+        <p class="section-note">Validators in the committee are tracked from their own block signatures; nothing to install. Names and heartbeats come from operators who registered. Heartbeats matter most outside the committee, where a validator signs nothing.</p>
       </div>
-      <div class="filters" role="group" aria-label="Filter operators">
+      <div class="filters" role="group" aria-label="Filter validators">
         <div class="segmented" id="filter">
           <button type="button" data-filter="all" aria-pressed="true">All <span class="count" data-count="all"></span></button>
-          <button type="button" data-filter="ok" aria-pressed="false">Online <span class="count" data-count="ok"></span></button>
-          <button type="button" data-filter="late" aria-pressed="false">Late <span class="count" data-count="late"></span></button>
-          <button type="button" data-filter="offline" aria-pressed="false">Offline <span class="count" data-count="offline"></span></button>
+          <button type="button" data-filter="problems" aria-pressed="false">Problems <span class="count" data-count="problems"></span></button>
+          <button type="button" data-filter="signing" aria-pressed="false">Signing <span class="count" data-count="signing"></span></button>
+          <button type="button" data-filter="outside" aria-pressed="false">Outside committee <span class="count" data-count="outside"></span></button>
+          <button type="button" data-filter="named" aria-pressed="false">Named <span class="count" data-count="named"></span></button>
         </div>
         <label class="search">
-          <span class="visually-hidden">Find an operator</span>
+          <span class="visually-hidden">Find a validator</span>
           <input type="search" id="search" placeholder="Find by name or address" autocomplete="off" spellcheck="false">
         </label>
       </div>
@@ -101,47 +102,44 @@
         <table class="op-table" id="op-table">
           <thead>
             <tr>
-              <th scope="col">Operator</th>
-              <th scope="col">Status</th>
-              <th scope="col">Last heartbeat</th>
-              <th scope="col" class="num">Latency</th>
-              <th scope="col">Uptime, 48 h</th>
               <th scope="col">Validator</th>
+              <th scope="col">Signatures</th>
+              <th scope="col">Last signature</th>
+              <th scope="col">Heartbeat</th>
             </tr>
           </thead>
           <tbody id="op-body"></tbody>
         </table>
       </div>
       <p class="empty" id="op-empty" hidden></p>
+      <button class="more" id="op-more" type="button" hidden>Show more</button>
     </section>
 
     <section class="join wrap" id="join" aria-labelledby="join-title">
-      <h2 id="join-title">Add your node</h2>
-      <p class="section-note">About ten minutes on the machine that runs your validator. You need Node.js 18 or newer and a little test ASE for fees.</p>
+      <h2 id="join-title">Put your name on your validator</h2>
+      <p class="section-note">One transaction from a small separate wallet. You need Node.js 18 or newer and a little test ASE for fees. Your validator shows up in the list either way; this only adds the name.</p>
       <ol class="steps">
         <li>
-          <h3>Get the sender</h3>
+          <h3>Get the tool</h3>
           <pre><code>git clone <span id="repo-url">https://github.com/&lt;owner&gt;/asentum-status</span>
 cd asentum-status &amp;&amp; npm ci --omit=dev</code></pre>
         </li>
         <li>
-          <h3>Create a heartbeat wallet</h3>
-          <p>Use a new wallet just for heartbeats, never your validator key.</p>
+          <h3>Create a wallet for it</h3>
+          <p>A new wallet just for this, never your validator key.</p>
           <pre><code>npm run hb -- keygen</code></pre>
         </li>
         <li>
           <h3>Fund it</h3>
-          <p>Send it 0.1 test ASE. At today's fee of 1 wei per gas, that covers years of heartbeats.</p>
+          <p>Send it 0.1 test ASE. At today's fee of 1 wei per gas, that lasts for years.</p>
         </li>
         <li>
-          <h3>Register your node</h3>
-          <pre><code>npm run hb -- register my-node --interval 300 --validator ase1…</code></pre>
-        </li>
-        <li>
-          <h3>Start the timer</h3>
-          <p>The repository has a systemd service and timer that send one heartbeat every five minutes. The README has the details.</p>
+          <h3>Register the name</h3>
+          <pre><code>npm run hb -- register my-node --validator ase1… --no-heartbeat</code></pre>
         </li>
       </ol>
+      <h3 class="join-sub">Add a heartbeat</h3>
+      <p class="section-note">Worth it if your validator is outside the committee, or if you want to know that your node accepts and relays transactions. Register with <code>--interval 300</code> instead of <code>--no-heartbeat</code> (or switch later with <code>update --interval 300</code>), then start the systemd timer described in the README.</p>
     </section>
   </main>
 

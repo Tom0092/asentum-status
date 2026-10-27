@@ -594,6 +594,7 @@ h3 {
 
 .segmented {
   display: inline-flex;
+  flex-wrap: wrap;
   border: 1px solid var(--hair);
   border-radius: 8px;
   padding: 2px;
@@ -753,6 +754,47 @@ h3 {
   outline: 1px solid var(--ink);
 }
 
+.op-anon {
+  text-decoration: none;
+}
+
+.op-anon:hover {
+  text-decoration: underline;
+}
+
+.c-hb .uptime {
+  margin-top: 0.35rem;
+}
+
+.more {
+  margin-top: 1rem;
+  font: inherit;
+  font-size: var(--step--1);
+  color: var(--ink);
+  background: var(--raise);
+  border: 1px solid var(--hair);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+}
+
+.more:hover {
+  border-color: var(--axis);
+}
+
+.join-sub {
+  margin-top: 2.25rem;
+}
+
+.join code {
+  font-size: 0.875em;
+  white-space: nowrap;
+}
+
+.join .steps {
+  margin-top: 1.5rem;
+}
+
 .empty {
   margin: 1.5rem 0 0;
   color: var(--ink-2);
@@ -777,19 +819,19 @@ h3 {
 
   .op-table tr {
     display: grid;
-    grid-template-columns: 1fr auto;
-    column-gap: 1rem;
+    grid-template-columns: 1fr;
+    row-gap: 0.35rem;
     padding: 0.9rem 0;
     border-bottom: 1px solid var(--hair);
   }
 
   .op-table td {
-    padding: 0.2rem 0;
+    padding: 0;
     border: 0;
   }
 
-  .op-table td.num {
-    text-align: left;
+  .op-table td.is-empty {
+    display: none;
   }
 
   .op-table td[data-label]::before {
@@ -797,21 +839,6 @@ h3 {
     display: block;
     color: var(--muted);
     font-size: 12px;
-  }
-
-  .op-table td.c-name {
-    grid-column: 1;
-  }
-
-  .op-table td.c-status {
-    grid-column: 2;
-    grid-row: 1;
-    text-align: right;
-  }
-
-  .op-table td.c-uptime,
-  .op-table td.c-val {
-    grid-column: 1 / -1;
   }
 
   .cells span {

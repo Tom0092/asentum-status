@@ -179,9 +179,22 @@ export async function startMockNode({ startMs = Date.now() } = {}) {
     }
     const p = url.pathname;
     if (p === '/participation') {
-      const vals = [...node.validators.entries()].map(([address, status]) => ({ address, stake: '0', signedBlocks: 900, participationRatio: status === 'signing' ? 0.98 : 0.2, lastSignedBlock: null, status }));
+      const vals = [...node.validators.entries()].map(([address, status]) => ({
+        address,
+        stake: String(2000n * 10n ** 18n),
+        signedBlocks: status === 'dormant' ? 0 : 900,
+        participationRatio: status === 'signing' ? 0.98 : status === 'idle' ? 0.2 : 0,
+        lastSignedBlock: status === 'dormant' ? null : String(node.chain.block - (status === 'idle' ? 400n : 1n)),
+        status,
+      }));
       const count = (s) => vals.filter((v) => v.status === s).length;
       return send({ head: String(node.chain.block), scannedFrom: '0', lookback: 1000, totalValidators: vals.length, signing: count('signing'), idle: count('idle'), dormant: count('dormant'), recentWindow: 100, validators: vals });
+    }
+    if (p === '/consensus/liveness') {
+      const tracked = [...node.validators.entries()]
+        .filter(([, status]) => status !== 'dormant')
+        .map(([address, status]) => ({ address, lastVotedHeight: String(node.chain.block - (status === 'idle' ? 400n : 1n)), consecutiveMisses: status === 'idle' ? 60 : 0, baked: false }));
+      return send({ head: String(node.chain.block), livenessWindow: '100', maxConsecutiveMisses: 50, baked: [], tracked });
     }
     const header = () => ({ number: String(node.chain.block), timestamp: String(node.chain.time), proposer: toAse1(hexAddr(9)) });
     try {

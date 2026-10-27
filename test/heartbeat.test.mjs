@@ -206,6 +206,46 @@ test('owner can remove an operator and hand over ownership', () => {
   assert.throws(() => hb.send(OWNER, 'removeOperator', [ALICE]), /only the owner/);
 });
 
+test('name only: interval 0 needs a validator and refuses beats', () => {
+  const { chain, hb } = setup();
+  assert.throws(() => hb.send(ALICE, 'register', ['alpha', 0, '']), /needs a validator/);
+  const rec = hb.send(ALICE, 'register', ['alpha', 0, VAL]);
+  assert.equal(rec.interval, 0);
+  assert.equal(rec.validator, VAL);
+  assert.throws(() => hb.send(ALICE, 'beat', [String(Number(chain.time)), 'v']), /heartbeats are off/);
+  assert.throws(() => hb.send(ALICE, 'update', [0, '']), /needs a validator/);
+  hb.send(ALICE, 'update', [300, VAL]);
+  hb.send(ALICE, 'beat', [String(Number(chain.time)), 'v']);
+  assert.equal(hb.view('getOperator', [ALICE]).beats, 1);
+  assert.equal(hb.view('getByValidator', [VAL.toUpperCase().replace('0X', '0x')]).name, 'alpha');
+});
+
+test('a validator carries one name; update and removal free it', () => {
+  const { hb } = setup();
+  const VAL2 = hexAddr(0x7a2);
+  hb.send(ALICE, 'register', ['alpha', 0, VAL]);
+  assert.throws(() => hb.send(BOB, 'register', ['beta', 0, VAL]), /already has a name/);
+  hb.send(BOB, 'register', ['beta', 300, '']);
+  assert.throws(() => hb.send(BOB, 'update', [300, VAL]), /already has a name/);
+
+  // Alice moves to another validator: the first one is free again.
+  hb.send(ALICE, 'update', [0, VAL2]);
+  assert.equal(hb.view('getByValidator', [VAL2]).name, 'alpha');
+  assert.equal(hb.view('getByValidator', [VAL]), null);
+  hb.send(BOB, 'update', [300, VAL]);
+  assert.equal(hb.view('getByValidator', [VAL]).name, 'beta');
+
+  // Updating with the same validator keeps the link.
+  hb.send(BOB, 'update', [600, VAL]);
+  assert.equal(hb.view('getByValidator', [VAL]).interval, 600);
+
+  hb.send(BOB, 'unregister');
+  assert.equal(hb.view('getByValidator', [VAL]), null);
+  hb.send(OWNER, 'removeOperator', [ALICE]);
+  assert.equal(hb.view('getByValidator', [VAL2]), null);
+  assert.deepEqual([...hb.data.keys()].sort(), ['n', 'owner']);
+});
+
 test('views do not change state', () => {
   const { hb } = setup();
   const before = JSON.stringify([...hb.data]);

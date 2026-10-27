@@ -177,3 +177,38 @@ test('heartbeat sender: keygen, register, beat, failures, alerts, recovery, unre
   assert.equal(reg3.view('getOperator', [toHexAddress(addr)]), null);
   assert.ok(existsSync(join(dir, 'hb', 'heartbeat-state.json')));
 });
+
+test('name only: register --no-heartbeat, beat refused, switch heartbeats on later', async () => {
+  const registry = readFileSync(join(dir, 'registry.txt'), 'utf8');
+  const env = { HB_RPC: node.url, HB_KEYFILE: join(dir, 'named', 'key.json'), HB_REGISTRY: registry, HB_TIMEOUT_MS: '3000' };
+  const hb = (...args) => run('sender/heartbeat.mjs', args, env);
+  assert.equal((await hb('keygen')).code, 0);
+  const addr = JSON.parse(readFileSync(env.HB_KEYFILE, 'utf8')).address;
+  node.fund(addr, ASE / 10n);
+  const validator = AsentumWallet.create(new AsentumClient(node.url)).address;
+
+  const noVal = await hb('register', 'named-node', '--no-heartbeat');
+  assert.equal(noVal.code, 1);
+  assert.match(noVal.stderr, /needs --validator/);
+  const both = await hb('register', 'named-node', '--no-heartbeat', '--interval', '300', '--validator', validator);
+  assert.equal(both.code, 1);
+
+  const reg = await hb('register', 'named-node', '--no-heartbeat', '--validator', validator);
+  assert.equal(reg.code, 0, reg.stderr);
+  assert.match(reg.stdout, /shows on the status page/);
+  const contract = node.contracts.get(toHexAddress(registry));
+  assert.equal(contract.view('getByValidator', [toHexAddress(validator)]).name, 'named-node');
+
+  node.advance(60000);
+  const beat = await hb('beat');
+  assert.equal(beat.code, 5);
+  assert.match(beat.stderr, /heartbeats are off/);
+
+  const up = await hb('update', '--interval', '300');
+  assert.equal(up.code, 0, up.stderr);
+  assert.match(up.stdout, /heartbeat every 300 s/);
+  node.advance(60000);
+  assert.equal((await hb('beat')).code, 0);
+  const st = await hb('status');
+  assert.match(st.stdout, /heartbeat\s+every 300 s/);
+});
