@@ -1,6 +1,6 @@
 [Unit]
 Description=Asentum Status: send one heartbeat
-Documentation=https://github.com/<owner>/asentum-status
+Documentation=https://github.com/Tom0092/asentum-status
 Wants=network-online.target
 After=network-online.target
 

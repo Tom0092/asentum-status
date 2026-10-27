@@ -7,5 +7,5 @@ export default {
   registry: '',
   canary: '',
   cronJob: '',
-  repo: '',
+  repo: 'https://github.com/Tom0092/asentum-status',
 };

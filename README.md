@@ -60,7 +60,7 @@ Your validator is on the page already if it is bonded. Registering adds your
 name: one transaction from a small separate wallet (Node.js 18 or newer).
 
 ```sh
-git clone https://github.com/<owner>/asentum-status && cd asentum-status
+git clone https://github.com/Tom0092/asentum-status && cd asentum-status
 npm ci --omit=dev
 npm run hb -- keygen          # a new wallet just for this, never your validator key
 #   -> send the printed address 0.1 test ASE (fees are 1 wei per gas today)
@@ -80,7 +80,7 @@ with systemd, Node.js 20 or newer):
 ```sh
 # 1. Install
 sudo useradd --system --home /var/lib/asentum-heartbeat --shell /usr/sbin/nologin asentum-hb
-sudo git clone https://github.com/<owner>/asentum-status /opt/asentum-status
+sudo git clone https://github.com/Tom0092/asentum-status /opt/asentum-status
 cd /opt/asentum-status && sudo npm ci --omit=dev
 
 # 2. Configure
