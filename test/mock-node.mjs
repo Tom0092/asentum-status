@@ -57,8 +57,9 @@ class CronRegistry {
   }
   view(method, args) {
     if (method === 'getJob') {
+      // Field names as the testnet's cron registry returns them (checked against job 17).
       const j = this.jobs.get(String(args[0]));
-      return j ? { id: j.id, owner: j.owner, target: j.target, method: j.method, nextRunAt: String(j.nextRunAt), intervalSec: String(j.interval), escrow: String(j.escrow) } : null;
+      return j ? { id: j.id, owner: j.owner, target: j.target, method: j.method, nextRunAt: String(j.nextRunAt), intervalSec: String(j.interval), gasEscrow: String(j.escrow) } : null;
     }
     throw new Error(`no method ${method}`);
   }

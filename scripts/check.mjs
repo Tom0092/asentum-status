@@ -40,7 +40,7 @@ if (!cfg.canary) {
     if (s.job) {
       const job = parseReturn(await client.view(CRON_REGISTRY, 'getJob', [s.job]).catch(() => null));
       if (!job) bad(`cron job ${s.job} not found: it ended (escrow used up?) or was cancelled`);
-      else if (job.escrow !== undefined) console.log(`           escrow left ${formatAse(job.escrow)} ASE`);
+      else if (job.gasEscrow !== undefined) console.log(`           escrow left ${formatAse(job.gasEscrow)} ASE`);
     }
   } catch (e) {
     bad(`canary not readable: ${describeError(e)}`);
