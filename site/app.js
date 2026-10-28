@@ -184,20 +184,33 @@ function trackFinality(height, now) {
   else if (height > seen.height) state.finalSeen = { height, at: now, moved: true };
 }
 
+// A single failed read must not flip the page to "unknown": the public RPC drops
+// some requests when it is busy. The last good reading counts for this long.
+const STALE_MS = 90000;
+
 function verdict(now) {
   const host = new URL(cfg.rpc).host;
-  if (!state.heads || !state.chain) {
-    if (state.errors.heads || state.errors.chain) {
-      const msg = (state.errors.heads || state.errors.chain).message || 'no answer';
+  const failed = state.errors.heads || state.errors.chain;
+  const silent = state.updatedAt ? now - state.updatedAt : Infinity;
+  if (!state.heads || !state.chain || (failed && silent > STALE_MS)) {
+    if (failed) {
+      const msg = failed.message || 'no answer';
+      const since = Number.isFinite(silent) ? ` for ${fmtDur(silent)}` : '';
       return {
         level: 'unknown',
         label: 'Unknown',
         title: "Can't reach the testnet from here",
-        detail: `The RPC at ${host} did not answer (${msg}). The chain may be fine; this page just can't see it right now.`,
+        detail: `The RPC at ${host} has not answered${since} (${msg}). The chain may be fine; this page just can't see it right now.`,
       };
     }
     return { level: 'unknown', label: 'Checking', title: 'Checking the testnet…', detail: 'Reading the newest blocks and the canary contract.' };
   }
+  const v = chainVerdict(now);
+  if (failed) v.detail += ` The RPC at ${host} is dropping requests right now; this is the last good reading, ${fmtAgo(silent)}.`;
+  return v;
+}
+
+function chainVerdict(now) {
   const { tip, finalized } = state.heads;
   const lag = tip - finalized;
   const finalAge = Math.max(0, now - state.chain.timestamp);
@@ -1065,9 +1078,9 @@ async function load(key, fn) {
     state[key] = await fn();
     state.errors[key] = null;
   } catch (e) {
+    // The last good value stays; verdict() turns it into "unknown" once it is
+    // older than STALE_MS, so the page never guesses from old data.
     state.errors[key] = e;
-    // Without fresh heads the page must not guess: show "unknown", not "stalled".
-    if (key === 'heads' || key === 'chain') state[key] = null;
   }
 }
 
