@@ -17,6 +17,7 @@
 //   HB_REGISTRY    registry address (default: the one in site/config.js)
 //   HB_TIMEOUT_MS  how long a beat may take to land before it counts as stuck (default 90000)
 //   HB_ALERT_URL   optional: POSTed on failure and on recovery (ntfy topic URL or any webhook)
+//   HB_ALERT_AFTER failed beats in a row before the failure alert goes out (default 3)
 //   HB_STATE_DIR   where the last result is kept for recovery alerts (default: next to the key)
 //
 // Exit codes for beat: 0 ok, 2 stuck (not in a block in time), 3 rejected by the node,
@@ -47,6 +48,7 @@ const RPC = process.env.HB_RPC || 'https://testnet.asentum.com';
 const KEYFILE = process.env.HB_KEYFILE || here('keys/heartbeat.json');
 const TIMEOUT = Number(process.env.HB_TIMEOUT_MS) || 90000;
 const ALERT_URL = process.env.HB_ALERT_URL || '';
+const ALERT_AFTER = Math.max(1, Math.trunc(Number(process.env.HB_ALERT_AFTER)) || 3);
 const STATE_DIR = process.env.HB_STATE_DIR || dirname(KEYFILE);
 
 const client = makeClient(RPC);
@@ -112,8 +114,9 @@ function writeState(s) {
   }
 }
 
+// Returns whether the alert was delivered, so a failed POST is retried on the next beat.
 async function alert(title, message, priority) {
-  if (!ALERT_URL) return;
+  if (!ALERT_URL) return false;
   try {
     const ntfy = /ntfy/i.test(ALERT_URL);
     const res = await fetch(ALERT_URL, {
@@ -125,8 +128,10 @@ async function alert(title, message, priority) {
       signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) console.error(`alert POST answered ${res.status}`);
+    return res.ok;
   } catch (e) {
     console.error(`alert POST failed: ${e.message}`);
+    return false;
   }
 }
 
@@ -204,19 +209,27 @@ const commands = {
       result.includedMs = Date.now() - sentAt;
       console.log(JSON.stringify({ level: 'info', msg: 'heartbeat landed', ...result }));
       writeState(result);
-      if (prev.ok === false) {
-        await alert('Heartbeat recovered', `Heartbeats from ${w.address} land again (block ${result.block}, ${result.includedMs} ms). Last failure: ${prev.error}`, 'default');
+      // State files from before HB_ALERT_AFTER have no "alerted": they were written after the alert went out.
+      if (prev.ok === false && prev.alerted !== false) {
+        await alert('Heartbeat recovered', `Heartbeats from ${w.address} land again (block ${result.block}, ${result.includedMs} ms) after ${prev.failures || 1} failed. Last failure: ${prev.error}`, 'default');
       }
     } catch (e) {
       const code = e instanceof Exit ? e.code : 1;
       result.ok = false;
       result.code = code;
       result.error = describeError(e);
+      // A single stuck beat is common on a slow testnet and usually lands minutes later.
+      // Count the streak and alert once it reaches HB_ALERT_AFTER; a shorter streak stays quiet.
+      const streak = prev.ok === false;
+      result.failures = streak ? (prev.failures || 1) + 1 : 1;
+      result.since = streak ? prev.since || prev.at : result.at;
+      result.alerted = streak ? prev.alerted !== false : false;
+      if (!result.alerted && result.failures >= ALERT_AFTER) {
+        const prefix = result.failures > 1 ? `${result.failures} beats in a row failed since ${result.since}. Last: ` : '';
+        result.alerted = await alert('Heartbeat failed', `Heartbeat from ${w.address} via ${RPC}: ${prefix}${result.error}`, 'high');
+      }
       console.error(JSON.stringify({ level: 'error', msg: 'heartbeat failed', ...result }));
       writeState(result);
-      if (prev.ok !== false) {
-        await alert('Heartbeat failed', `Heartbeat from ${w.address} via ${RPC}: ${result.error}`, 'high');
-      }
       throw new Exit(code, result.error);
     }
   },

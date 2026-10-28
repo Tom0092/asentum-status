@@ -117,6 +117,7 @@ test('heartbeat sender: keygen, register, beat, failures, alerts, recovery, unre
     HB_KEYFILE: join(dir, 'hb', 'heartbeat.json'),
     HB_REGISTRY: registry,
     HB_ALERT_URL: alertUrl,
+    HB_ALERT_AFTER: '2',
     HB_TIMEOUT_MS: '3000',
   };
   const hb = (...args) => run('sender/heartbeat.mjs', args, env);
@@ -149,14 +150,19 @@ test('heartbeat sender: keygen, register, beat, failures, alerts, recovery, unre
   assert.equal(op.ver, 'asentum-status/1.0.0');
   assert.equal(alerts.length, 0);
 
-  // Too soon: the contract refuses, the sender exits 5 and alerts once.
+  // Too soon: the contract refuses and the sender exits 5. With HB_ALERT_AFTER=2
+  // the first failure stays quiet, the second alerts, the third does not repeat it.
   const b2 = await hb('beat');
   assert.equal(b2.code, 5);
   assert.match(b2.stderr, /too frequent/);
-  assert.equal(alerts.length, 1);
-  assert.equal(alerts[0].title, 'Heartbeat failed');
+  assert.equal(alerts.length, 0, 'one failure is below the threshold');
   const b2b = await hb('beat');
   assert.equal(b2b.code, 5);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].title, 'Heartbeat failed');
+  assert.match(alerts[0].body, /2 beats in a row failed since/);
+  const b2c = await hb('beat');
+  assert.equal(b2c.code, 5);
   assert.equal(alerts.length, 1, 'no repeat alert while still failing');
 
   node.advance(60000);
@@ -164,19 +170,32 @@ test('heartbeat sender: keygen, register, beat, failures, alerts, recovery, unre
   assert.equal(b3.code, 0, b3.stderr);
   assert.equal(alerts.length, 2);
   assert.equal(alerts[1].title, 'Heartbeat recovered');
+  assert.match(alerts[1].body, /after 3 failed/);
 
-  // A node that accepts but never includes: exit 2 (stuck).
+  // A node that accepts but never includes: exit 2 (stuck). One stuck beat
+  // stays quiet, and so does the recovery from it.
   node.advance(60000);
   node.dropTx = true;
   const b4 = await hb('beat');
   node.dropTx = false;
   assert.equal(b4.code, 2);
   assert.match(b4.stderr, /not in a block/);
+  assert.equal(alerts.length, 2);
+  const b5 = await hb('beat');
+  assert.equal(b5.code, 0, b5.stderr);
+  assert.equal(alerts.length, 2, 'no recovery message for a failure nobody heard about');
+
+  // A state file from before HB_ALERT_AFTER (alert already sent, no counter) still gets its recovery.
+  writeFileSync(join(dir, 'hb', 'heartbeat-state.json'), JSON.stringify({ at: new Date().toISOString(), ok: false, code: 2, error: 'old failure' }));
+  node.advance(60000);
+  const b6 = await hb('beat');
+  assert.equal(b6.code, 0, b6.stderr);
   assert.equal(alerts.length, 3);
+  assert.equal(alerts[2].title, 'Heartbeat recovered');
 
   const s = await hb('status');
   assert.equal(s.code, 0);
-  assert.match(s.stdout, /beats\s+2/);
+  assert.match(s.stdout, /beats\s+4/);
 
   const u = await hb('unregister');
   assert.equal(u.code, 0, u.stderr);

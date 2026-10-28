@@ -108,8 +108,12 @@ Other commands: `hb status`, `hb address`, `hb update --interval 600`,
 `hb update --no-heartbeat`, `hb update --validator none`, `hb unregister`.
 
 **Alerts.** Set `HB_ALERT_URL` in `/etc/asentum-heartbeat.env` to an ntfy
-topic (or any webhook) to get one message when heartbeats start failing and
-one when they recover.
+topic (or any webhook) to get one message when heartbeats keep failing and
+one when they recover. A single stuck heartbeat is common on the testnet and
+usually lands a few minutes later, so the sender alerts only after
+`HB_ALERT_AFTER` failed beats in a row (default 3, about 10 minutes at a 300 s
+interval). A shorter streak stays quiet, its recovery too. Set it to 1 to hear
+about every failure.
 
 **Testing your own node's transaction path.** By default the sender goes
 through the public gateway. If your node serves the REST API locally, set
