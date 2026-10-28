@@ -82,6 +82,7 @@ const state = {
   ops: null,
   part: null,
   live: null,
+  finalSeen: null,
   errors: {},
   updatedAt: 0,
   loadedOnce: false,
@@ -170,6 +171,14 @@ function recentBlockTime() {
   return { ms: (last[0] - first[0]) / blocks, blocks, span: last[0] - first[0] };
 }
 
+// Remembers when this page last saw the final height move. A final block can be
+// minutes old while finality still advances (it only lags), and that is not a stall.
+function trackFinality(height, now) {
+  const seen = state.finalSeen;
+  if (!seen) state.finalSeen = { height, at: now, moved: false };
+  else if (height > seen.height) state.finalSeen = { height, at: now, moved: true };
+}
+
 function verdict(now) {
   const host = new URL(cfg.rpc).host;
   if (!state.heads || !state.chain) {
@@ -191,6 +200,15 @@ function verdict(now) {
   const canaryAge = last ? Math.max(0, now - last) : null;
   const interval = canaryInterval();
 
+  const still = state.finalSeen ? now - state.finalSeen.at : 0;
+  if (state.chain.timestamp && finalAge > 2 * MIN && still <= 2 * MIN) {
+    return {
+      level: 'warning',
+      label: 'Degraded',
+      title: 'Finality is far behind',
+      detail: `The newest final block, #${fmtInt(finalized)}, is ${fmtDur(finalAge)} old and ${fmtInt(lag)} blocks behind the newest block. ${state.finalSeen?.moved ? 'Finality still advances, only late.' : 'Watching whether it still advances.'}`,
+    };
+  }
   if (state.chain.timestamp && finalAge > 2 * MIN) {
     return {
       level: 'critical',
@@ -1031,6 +1049,7 @@ async function poll() {
   round += 1;
   document.querySelectorAll('.plot').forEach((p) => p.classList.add('refreshing'));
   await Promise.allSettled(jobs);
+  if (state.heads) trackFinality(state.heads.finalized, source.now());
   document.querySelectorAll('.plot').forEach((p) => p.classList.remove('refreshing'));
   if (!state.errors.heads && !state.errors.chain) state.updatedAt = source.now();
   renderAll();
