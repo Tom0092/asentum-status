@@ -42,7 +42,8 @@ function parseMaybeJson(v) {
 }
 
 function chainSource() {
-  const client = new AsentumClient(cfg.rpc, { retries: 2, requestTimeoutMs: 15000 });
+  // No retries: the next poll is the retry, and poll() backs off while the RPC fails.
+  const client = new AsentumClient(cfg.rpc, { retries: 0, requestTimeoutMs: 15000 });
   return {
     now: () => Date.now(),
     heads: () => client.getHeads(),
@@ -53,6 +54,10 @@ function chainSource() {
     async canary() {
       if (!cfg.canary) return null;
       return parseMaybeJson(await client.view(cfg.canary, 'snapshot', []));
+    },
+    async canaryStatus() {
+      if (!cfg.canary) return null;
+      return parseMaybeJson(await client.view(cfg.canary, 'status', []));
     },
     async operators() {
       if (!cfg.registry) return null;
@@ -930,7 +935,8 @@ function renderValidators(now, networkLevel) {
   more.textContent = `Show ${fmtInt(Math.min(PAGE_SIZE, matches.length - shown.length))} more of ${fmtInt(matches.length - shown.length)}`;
 
   const blockMs = recentBlockTime()?.ms || 2400;
-  const head = state.heads?.tip ?? (Number(state.part?.head) || 0);
+  // Signatures are read less often than heads, so measure against their own head.
+  const head = Number(state.part?.head) || state.heads?.tip || 0;
 
   for (const r of shown) {
     const tr = body.insertRow();
@@ -1027,8 +1033,32 @@ function renderAll() {
 // ---------------------------------------------------------------- polling
 
 const FAST_MS = 10000;
-let round = 0;
+const SLOW_MS = 2 * MIN;
+// How often each source is read. Heads and the canary status are tiny; the
+// participation history is the one expensive call (about 170 KB and seconds of
+// work on the node), so it is read least often.
+const EVERY = { canary: MIN, ops: 30000, part: 5 * MIN, live: MIN };
+const lastTry = {};
+let failures = 0;
 let timer = null;
+
+function due(key, now) {
+  if (key in lastTry && now - lastTry[key] < EVERY[key]) return false;
+  lastTry[key] = now;
+  return true;
+}
+
+// Between full snapshots only the small status is read and merged in.
+async function loadCanaryStatus() {
+  if (!state.canary) return load('canary', source.canary);
+  try {
+    const status = await source.canaryStatus();
+    if (status) state.canary = { ...state.canary, status };
+    state.errors.canary = null;
+  } catch (e) {
+    state.errors.canary = e;
+  }
+}
 
 async function load(key, fn) {
   try {
@@ -1043,10 +1073,12 @@ async function load(key, fn) {
 
 async function poll() {
   clearTimeout(timer);
-  const jobs = [load('heads', source.heads), load('chain', source.chainInfo), load('canary', source.canary)];
-  if (round % 3 === 0) jobs.push(load('ops', source.operators));
-  if (round % 6 === 0) jobs.push(load('part', source.participation), load('live', source.liveness));
-  round += 1;
+  const t = Date.now();
+  const jobs = [load('heads', source.heads), load('chain', source.chainInfo)];
+  jobs.push(due('canary', t) ? load('canary', source.canary) : loadCanaryStatus());
+  if (due('ops', t)) jobs.push(load('ops', source.operators));
+  if (due('part', t)) jobs.push(load('part', source.participation));
+  if (due('live', t)) jobs.push(load('live', source.liveness));
   document.querySelectorAll('.plot').forEach((p) => p.classList.add('refreshing'));
   await Promise.allSettled(jobs);
   if (state.heads) trackFinality(state.heads.finalized, source.now());
@@ -1054,7 +1086,10 @@ async function poll() {
   if (!state.errors.heads && !state.errors.chain) state.updatedAt = source.now();
   renderAll();
   state.loadedOnce = true;
-  if (!document.hidden) timer = setTimeout(poll, FAST_MS);
+  // While the RPC fails, wait 20 s, 40 s, ... up to two minutes instead of
+  // adding load to a gateway that is already struggling.
+  failures = state.errors.heads || state.errors.chain ? failures + 1 : 0;
+  if (!document.hidden) timer = setTimeout(poll, Math.min(SLOW_MS, FAST_MS * 2 ** failures));
 }
 
 document.addEventListener('visibilitychange', () => {
