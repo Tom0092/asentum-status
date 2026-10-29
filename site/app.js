@@ -875,7 +875,19 @@ function sub(text) {
   return s;
 }
 
-function heartbeatCell(td, op, hb, now, hours) {
+// Where an offline node stopped, read from the chain. A stuck node can still call itself
+// in sync and active (its tooling compares against a peer that may be stuck at the same
+// height, 2026-10-29), so the page says it plainly when the network runs on without it.
+function stopHint(op, hb, tip, networkLevel) {
+  // A stalled or unreadable network explains itself in the banner and the hero.
+  if (networkLevel !== 'good' && networkLevel !== 'warning') return null;
+  if (hb.key !== 'offline' || !op.lastBlock || !tip || tip <= op.lastBlock) return null;
+  const fact = `Last beat landed in block #${fmtInt(op.lastBlock)}, the chain is ${fmtInt(tip - op.lastBlock)} blocks further.`;
+  if (networkLevel !== 'good') return fact;
+  return `${fact} The network is running, so check this node, even if it reports itself in sync.`;
+}
+
+function heartbeatCell(td, op, hb, now, hours, tip, networkLevel) {
   if (!op) {
     td.textContent = '–';
     td.classList.add('is-empty');
@@ -890,6 +902,12 @@ function heartbeatCell(td, op, hb, now, hours) {
   const parts = [op.last ? fmtAgo(now - op.last) : 'none yet', `every ${fmtDur(op.interval * 1000)}`];
   if (L.last !== null) parts.push(`latency ${fmtSec(L.last)}`);
   td.append(sub(parts.join(', ')));
+  const hint = stopHint(op, hb, tip, networkLevel);
+  if (hint) {
+    const h = sub(hint);
+    h.classList.add('op-hint');
+    td.append(h);
+  }
 
   const U = opUptime(op, now, hours);
   const wrap = document.createElement('div');
@@ -988,7 +1006,7 @@ function renderValidators(now, networkLevel) {
       last.append(sub(`block #${fmtInt(lsb)}`));
     }
 
-    heartbeatCell(cell(tr, 'c-hb', 'Heartbeat'), r.op, r.hb, now, hours);
+    heartbeatCell(cell(tr, 'c-hb', 'Heartbeat'), r.op, r.hb, now, hours, state.heads?.tip || head, networkLevel);
   }
 }
 

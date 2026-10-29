@@ -692,6 +692,12 @@ h3 {
   text-decoration: none;
 }
 
+.op-hint {
+  margin-top: 0.2rem;
+  max-width: 34ch;
+  color: var(--ink);
+}
+
 .op-addr:hover {
   text-decoration: underline;
 }

@@ -42,7 +42,10 @@ its signature status, last signature and, if registered, name and heartbeat.
 
 Reading it: if the canary is fine but your validator stops signing or your
 heartbeat is late, look at your node. If the canary stalls, everybody is
-affected.
+affected. When a heartbeat goes offline, the page names the block of the last
+beat and how far the chain has moved since. Trust that over the node's own
+status: a stuck node can still report itself in sync and signing when the peer
+it compares against is stuck at the same height.
 
 ## Layout
 
