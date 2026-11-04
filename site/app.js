@@ -55,10 +55,6 @@ function chainSource() {
       if (!cfg.canary) return null;
       return parseMaybeJson(await client.view(cfg.canary, 'snapshot', []));
     },
-    async canaryStatus() {
-      if (!cfg.canary) return null;
-      return parseMaybeJson(await client.view(cfg.canary, 'status', []));
-    },
     async operators() {
       if (!cfg.registry) return null;
       const items = [];
@@ -1063,32 +1059,26 @@ function renderAll() {
 
 // ---------------------------------------------------------------- polling
 
-const FAST_MS = 10000;
+const FAST_MS = 20000;
 const SLOW_MS = 2 * MIN;
-// How often each source is read. Heads and the canary status are tiny; the
-// participation history is the one expensive call (about 170 KB and seconds of
-// work on the node), so it is read least often.
-const EVERY = { canary: MIN, ops: 30000, part: 5 * MIN, live: MIN };
+// How often each source is read. Every visitor's browser reads the public RPC
+// directly, so nothing is read much faster than the page can show it changing.
+// Heartbeats are minutes apart. Liveness (about 50 KB) and the participation
+// history (about 180 KB and seconds of work on the node) are the big responses.
+// Keep the canary at a minute: verdict() warns once the last tick looks older than
+// three intervals, and the time between reads adds to that age.
+const EVERY = { canary: MIN, ops: 2 * MIN, part: 10 * MIN, live: 2 * MIN };
 const lastTry = {};
 let failures = 0;
 let timer = null;
 
 function due(key, now) {
-  if (key in lastTry && now - lastTry[key] < EVERY[key]) return false;
+  // A failed read comes back within SLOW_MS, or a busy RPC at page load would
+  // leave the validator table empty for the full ten minutes.
+  const wait = state.errors[key] ? Math.min(SLOW_MS, EVERY[key]) : EVERY[key];
+  if (key in lastTry && now - lastTry[key] < wait) return false;
   lastTry[key] = now;
   return true;
-}
-
-// Between full snapshots only the small status is read and merged in.
-async function loadCanaryStatus() {
-  if (!state.canary) return load('canary', source.canary);
-  try {
-    const status = await source.canaryStatus();
-    if (status) state.canary = { ...state.canary, status };
-    state.errors.canary = null;
-  } catch (e) {
-    state.errors.canary = e;
-  }
 }
 
 async function load(key, fn) {
@@ -1106,7 +1096,7 @@ async function poll() {
   clearTimeout(timer);
   const t = Date.now();
   const jobs = [load('heads', source.heads), load('chain', source.chainInfo)];
-  jobs.push(due('canary', t) ? load('canary', source.canary) : loadCanaryStatus());
+  if (due('canary', t)) jobs.push(load('canary', source.canary));
   if (due('ops', t)) jobs.push(load('ops', source.operators));
   if (due('part', t)) jobs.push(load('part', source.participation));
   if (due('live', t)) jobs.push(load('live', source.liveness));
@@ -1117,10 +1107,12 @@ async function poll() {
   if (!state.errors.heads && !state.errors.chain) state.updatedAt = source.now();
   renderAll();
   state.loadedOnce = true;
-  // While the RPC fails, wait 20 s, 40 s, ... up to two minutes instead of
-  // adding load to a gateway that is already struggling.
+  // One failed read just waits for the next regular one. After that, wait 40 s,
+  // 80 s, up to two minutes instead of adding load to a gateway that is already
+  // struggling. A busy RPC drops single requests, so this still takes four failed
+  // reads in a row before the last good reading ages past STALE_MS.
   failures = state.errors.heads || state.errors.chain ? failures + 1 : 0;
-  if (!document.hidden) timer = setTimeout(poll, Math.min(SLOW_MS, FAST_MS * 2 ** failures));
+  if (!document.hidden) timer = setTimeout(poll, Math.min(SLOW_MS, FAST_MS * 2 ** Math.max(0, failures - 1)));
 }
 
 document.addEventListener('visibilitychange', () => {

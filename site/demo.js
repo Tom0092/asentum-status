@@ -203,7 +203,6 @@ export function createDemoSource() {
       return wait({ height: tipAt(now) - 3, timestamp: now - 3 * blockMs - 800 });
     },
     canary: () => wait(canary(Date.now())),
-    canaryStatus: () => wait(canary(Date.now()).status),
     operators: () => wait(operators(Date.now())),
     participation: () => wait(participation(Date.now())),
     liveness: () => wait(liveness(Date.now())),
