@@ -1,9 +1,26 @@
 import { AsentumClient, toAse1, shortAse1, formatAse } from './vendor/asentum-sdk.js';
 import CONFIG from './config.js';
 import { createDemoSource } from './demo.js';
+import {
+  MIN,
+  HOUR,
+  fmtInt,
+  fmtSec,
+  fmtDur,
+  fmtAgo,
+  canaryInterval,
+  recentBlockTime,
+  nextFinality,
+  verdict,
+  opUptime,
+  opLatency,
+  niceScale,
+  hourRows,
+  buildRows,
+  stopHint,
+  FILTERS,
+} from './logic.js';
 
-const MIN = 60000;
-const HOUR = 3600000;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const $ = (id) => document.getElementById(id);
 
@@ -29,6 +46,7 @@ const cfg = {
   repo: cleanUrl(CONFIG.repo || '', ''),
   demo: params.has('demo'),
 };
+const rpcHost = new URL(cfg.rpc).host;
 
 // ---------------------------------------------------------------- data
 
@@ -91,28 +109,6 @@ const state = {
 
 // ---------------------------------------------------------------- format
 
-const nf = new Intl.NumberFormat();
-const fmtInt = (n) => (Number.isFinite(n) ? nf.format(Math.round(n)) : '–');
-const fmtSec = (ms, digits = 1) => `${(ms / 1000).toFixed(digits)} s`;
-
-function fmtDur(ms) {
-  ms = Math.max(0, ms);
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s} s`;
-  // Round to whole minutes first, then split: 1 h 59.6 min is "2 h", not "1 h 60 min".
-  const total = Math.round(ms / MIN);
-  if (total < 60) return `${total} min`;
-  const h = Math.floor(total / 60);
-  const m = total % 60;
-  if (h >= 48) return `${Math.round(h / 24)} days`;
-  return m ? `${h} h ${m} min` : `${h} h`;
-}
-
-function fmtAgo(ms) {
-  if (ms < 1500) return 'just now';
-  return `${fmtDur(ms)} ago`;
-}
-
 const fmtClock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const fmtClockSec = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const fmtDay = (t) => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -152,165 +148,6 @@ function statusEl(level, label) {
   return span;
 }
 
-// ---------------------------------------------------------------- derived data
-
-function canaryInterval() {
-  return Number(state.canary?.status?.intervalMs) || MIN;
-}
-
-// Seconds per block over the newest hour of canary ticks.
-function recentBlockTime() {
-  const r = state.canary?.recent || [];
-  if (r.length < 2) return null;
-  const last = r[r.length - 1];
-  let first = r[0];
-  for (const t of r) {
-    if (last[0] - t[0] <= HOUR) {
-      first = t;
-      break;
-    }
-  }
-  const blocks = last[1] - first[1];
-  if (blocks <= 0) return null;
-  return { ms: (last[0] - first[0]) / blocks, blocks, span: last[0] - first[0] };
-}
-
-// Remembers when this page last saw the final height move. A final block can be
-// minutes old while finality still advances (it only lags), and that is not a stall.
-function trackFinality(height, now) {
-  const seen = state.finalSeen;
-  if (!seen) state.finalSeen = { height, at: now, moved: false };
-  else if (height > seen.height) state.finalSeen = { height, at: now, moved: true };
-}
-
-// A single failed read must not flip the page to "unknown": the public RPC drops
-// some requests when it is busy. The last good reading counts for this long.
-const STALE_MS = 90000;
-
-function verdict(now) {
-  const host = new URL(cfg.rpc).host;
-  const failed = state.errors.heads || state.errors.chain;
-  const silent = state.updatedAt ? now - state.updatedAt : Infinity;
-  if (!state.heads || !state.chain || (failed && silent > STALE_MS)) {
-    if (failed) {
-      const msg = failed.message || 'no answer';
-      const since = Number.isFinite(silent) ? ` for ${fmtDur(silent)}` : '';
-      return {
-        level: 'unknown',
-        label: 'Unknown',
-        title: "Can't reach the testnet from here",
-        detail: `The RPC at ${host} has not answered${since} (${msg}). The chain may be fine; this page just can't see it right now.`,
-      };
-    }
-    return { level: 'unknown', label: 'Checking', title: 'Checking the testnet…', detail: 'Reading the newest blocks and the canary contract.' };
-  }
-  const v = chainVerdict(now);
-  if (failed) v.detail += ` The RPC at ${host} is dropping requests right now; this is the last good reading, ${fmtAgo(silent)}.`;
-  return v;
-}
-
-function chainVerdict(now) {
-  const { tip, finalized } = state.heads;
-  const lag = tip - finalized;
-  const finalAge = Math.max(0, now - state.chain.timestamp);
-  const last = Number(state.canary?.status?.last) || 0;
-  const canaryAge = last ? Math.max(0, now - last) : null;
-  const interval = canaryInterval();
-
-  const still = state.finalSeen ? now - state.finalSeen.at : 0;
-  if (state.chain.timestamp && finalAge > 2 * MIN && still <= 2 * MIN) {
-    return {
-      level: 'warning',
-      label: 'Degraded',
-      title: 'Finality is far behind',
-      detail: `The newest final block, #${fmtInt(finalized)}, is ${fmtDur(finalAge)} old and ${fmtInt(lag)} blocks behind the newest block. ${state.finalSeen?.moved ? 'Finality still advances, only late.' : 'Watching whether it still advances.'}`,
-    };
-  }
-  if (state.chain.timestamp && finalAge > 2 * MIN) {
-    return {
-      level: 'critical',
-      label: 'Stalled',
-      title: 'The testnet has stopped finalizing blocks',
-      detail: `The newest final block, #${fmtInt(finalized)}, is ${fmtDur(finalAge)} old.${canaryAge !== null ? ` The canary last ticked ${fmtAgo(canaryAge)}.` : ''}`,
-    };
-  }
-  if (lag > 30) {
-    return {
-      level: 'warning',
-      label: 'Degraded',
-      title: 'Finality is falling behind',
-      detail: `The newest block is ${fmtInt(lag)} blocks ahead of the newest final block. Transactions land, but take longer to become final.`,
-    };
-  }
-  if (canaryAge !== null && canaryAge > 3 * interval) {
-    return {
-      level: 'warning',
-      label: 'Degraded',
-      title: 'Blocks are final, but scheduled jobs are late',
-      detail: `The canary last ticked ${fmtAgo(canaryAge)}. Either the chain is delaying cron jobs or the canary's gas escrow ran out.`,
-    };
-  }
-  const parts = [`Newest final block #${fmtInt(finalized)}, ${fmtAgo(finalAge)}.`];
-  if (canaryAge !== null) parts.push(`The canary ticked ${fmtAgo(canaryAge)}.`);
-  return { level: 'good', label: 'Running', title: 'The testnet is running', detail: parts.join(' ') };
-}
-
-function opStatus(op, now) {
-  if (!op.last) return { key: 'waiting', level: 'neutral', label: 'Waiting for the first beat', rank: 2 };
-  const age = now - op.last;
-  const iv = (Number(op.interval) || 300) * 1000;
-  if (age <= 2 * iv + MIN) return { key: 'ok', level: 'good', label: 'Online', rank: 3 };
-  if (age <= 6 * iv) return { key: 'late', level: 'warning', label: 'Late', rank: 1 };
-  return { key: 'offline', level: 'critical', label: 'Offline', rank: 0 };
-}
-
-// Per-hour uptime cells and the percentage over the shown window.
-// A beat is only expected once a full interval has passed (the newest one may
-// still be on its way), and the percentage compares window totals, so a beat
-// that lands just after the hour turns does not count as a miss in one hour
-// and a surplus in the next. Where the timer grid starts is unknown, so the
-// percentage is good to about one beat: a single missed beat in 48 h can still
-// read 100 %, the hour's cell still says "11 of 12".
-function opUptime(op, now, hours) {
-  const iv = (Number(op.interval) || 300) * 1000;
-  const endHour = Math.floor(now / HOUR);
-  const startHour = endHour - hours + 1;
-  const byHour = new Map((op.hist || []).map((b) => [b[0], b]));
-  const joined = Number(op.joined) || 0;
-  const due = now - iv;
-  let got = 0;
-  let want = 0;
-  const cells = [];
-  for (let h = startHour; h <= endHour; h++) {
-    const from = Math.max(h * HOUR, joined);
-    const beats = byHour.get(h)?.[1] || 0;
-    if (Math.min((h + 1) * HOUR, now) <= from) {
-      cells.push({ h, level: 'x', beats: 0, expected: 0, why: 'not registered yet' });
-      continue;
-    }
-    const expected = Math.max(0, Math.floor((Math.min((h + 1) * HOUR, due) - from) / iv));
-    got += beats;
-    want += expected;
-    if (!expected) {
-      cells.push({ h, level: beats ? 3 : 'x', beats, expected, why: beats ? '' : 'too early to tell' });
-      continue;
-    }
-    const frac = Math.min(1, beats / expected);
-    cells.push({ h, level: frac >= 0.9 ? 3 : frac >= 0.5 ? 2 : frac > 0 ? 1 : 0, beats, expected });
-  }
-  return { pct: want ? (Math.min(got, want) / want) * 100 : null, cells };
-}
-
-function opLatency(op) {
-  let sum = 0;
-  let n = 0;
-  for (const b of op.hist || []) {
-    sum += b[2];
-    n += b[4];
-  }
-  return { last: op.lat >= 0 ? op.lat : null, avg: n ? sum / n : null };
-}
-
 // ---------------------------------------------------------------- svg helpers
 
 function svgEl(tag, attrs = {}, parent) {
@@ -334,17 +171,6 @@ function barPath(x, y, w, base) {
   const hgt = base - y;
   const r = Math.max(0, Math.min(4, w / 2, hgt));
   return `M${x},${base}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${base}Z`;
-}
-
-// A y scale with round tick steps (1, 2, 2.5, 5 times a power of ten).
-function niceScale(v, floor, target = 4) {
-  const m = Math.max(v, floor);
-  const raw = m / target;
-  const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((s) => s * mag).find((s) => s >= raw - 1e-9);
-  const ticks = Math.max(1, Math.ceil(m / step - 1e-9));
-  const decimals = Math.max(0, -Math.floor(Math.log10(step) + 1e-9) + (step / mag === 2.5 ? 1 : 0));
-  return { max: ticks * step, ticks, fmt: (x) => (decimals ? x.toFixed(decimals) : fmtInt(x)) };
 }
 
 function yGrid(svg, { left, right, top, base, max, ticks, fmt }) {
@@ -497,7 +323,7 @@ function renderPulse(now) {
     return;
   }
 
-  const interval = canaryInterval();
+  const interval = canaryInterval(state.canary);
   const slotOf = (t) => windowMin - 1 - Math.floor((now - t) / MIN);
   const bars = [];
   const misses = new Set();
@@ -580,38 +406,9 @@ function renderPulse(now) {
   );
 }
 
-function hourRows(now) {
-  const st = state.canary?.status;
-  const buckets = state.canary?.buckets || [];
-  if (!st || !st.first) return [];
-  const interval = canaryInterval();
-  const byHour = new Map(buckets.map((b) => [b[0], b]));
-  const endHour = Math.floor(now / HOUR);
-  const rows = [];
-  for (let h = endHour - 47; h <= endHour; h++) {
-    const from = Math.max(h * HOUR, st.first);
-    const to = Math.min((h + 1) * HOUR, now);
-    if (to <= from) continue;
-    const b = byHour.get(h);
-    const ticks = b ? b[1] : 0;
-    const partial = h === endHour || from > h * HOUR;
-    const expected = Math.max(0, Math.floor((to - from) / interval) - (partial ? 1 : 0));
-    const missedMin = (Math.max(0, expected - ticks) * interval) / MIN;
-    rows.push({
-      h,
-      ticks,
-      missedMin,
-      maxGap: b ? b[2] : 0,
-      blocks: b ? b[3] : 0,
-      blockMs: b && b[3] > 0 ? b[4] / b[3] : null,
-    });
-  }
-  return rows;
-}
-
 function renderMissed(now) {
   const box = $('missed');
-  const rows = hourRows(now);
+  const rows = hourRows(state.canary, now);
   if (!rows.length) {
     emptyMessage(box, state.canary ? 'No canary history yet.' : cfg.canary || cfg.demo ? 'Loading…' : 'No canary contract configured yet.');
     fillTable('missed-table', [['Hour'], ['Minutes without a tick', 1], ['Longest gap', 1]], []);
@@ -662,7 +459,7 @@ function renderMissed(now) {
 
 function renderBlockTime(now) {
   const box = $('blocktime');
-  const rows = hourRows(now).filter((r) => r.blockMs !== null);
+  const rows = hourRows(state.canary, now).filter((r) => r.blockMs !== null);
   if (rows.length < 2) {
     emptyMessage(box, state.canary ? 'Not enough canary history yet.' : cfg.canary || cfg.demo ? 'Loading…' : 'No canary contract configured yet.');
     fillTable('blocktime-table', [['Hour'], ['Seconds per block', 1], ['Blocks', 1]], []);
@@ -767,7 +564,7 @@ function renderIncidents() {
 // ---------------------------------------------------------------- hero & kpis
 
 function renderHero(now) {
-  const v = verdict(now);
+  const v = verdict(state, now, rpcHost);
   const hero = $('hero');
   hero.setAttribute('aria-busy', v.label === 'Checking' ? 'true' : 'false');
   const st = $('state');
@@ -785,7 +582,7 @@ function renderKpis(now) {
   $('kpi-tip').textContent = h ? fmtInt(h.tip) : '–';
   $('kpi-tip-sub').textContent = h && c ? `Final #${fmtInt(h.finalized)}, ${fmtAgo(Math.max(0, now - c.timestamp))}` : '';
 
-  const bt = recentBlockTime();
+  const bt = recentBlockTime(state.canary);
   if (h) {
     const lag = h.tip - h.finalized;
     $('kpi-lag').textContent = `${fmtInt(lag)} ${lag === 1 ? 'block' : 'blocks'}`;
@@ -815,67 +612,6 @@ let filter = 'all';
 let query = '';
 let showCount = PAGE_SIZE;
 
-const RANK = { critical: 0, warning: 1, good: 2, neutral: 3 };
-
-// Status from the validator's own signatures (node data, nothing to install).
-function signingStatus(v, live) {
-  const p = state.part;
-  // Without the participation list there is no way to tell; "not bonded" would be a guess.
-  if (!v && !p) {
-    return state.errors.part
-      ? { key: 'unknown', level: 'neutral', label: 'Signature data unavailable', sub: 'The node did not answer; retrying' }
-      : { key: 'unknown', level: 'neutral', label: 'Loading signatures…', sub: '' };
-  }
-  if (!v) return { key: 'none', level: 'neutral', label: 'Not in the validator set', sub: 'This address is not bonded' };
-  const misses = Number(live?.consecutiveMisses) || 0;
-  const maxMisses = Number(state.live?.maxConsecutiveMisses) || 0;
-  const pct = `${Math.round((Number(v.participationRatio) || 0) * 100)} % of the last ${fmtInt(p?.lookback || 1000)} blocks`;
-  if (v.status === 'dormant') return { key: 'outside', level: 'neutral', label: 'Outside the committee', sub: 'Syncs, but signs nothing, so there is no signal' };
-  if (maxMisses && misses >= maxMisses) return { key: 'problem', level: 'critical', label: 'Not voting', sub: `${fmtInt(misses)} votes missed in a row` };
-  if (v.status === 'idle') return { key: 'problem', level: 'warning', label: 'Idle', sub: `No signature in the last ${fmtInt(p?.recentWindow || 100)} blocks` };
-  if (misses > 0) return { key: 'problem', level: 'warning', label: 'Missing votes', sub: `${fmtInt(misses)} missed in a row, ${pct}` };
-  if (v.status === 'signing') return { key: 'signing', level: 'good', label: 'Signing', sub: pct };
-  return { key: 'other', level: 'neutral', label: String(v.status || 'Unknown'), sub: pct };
-}
-
-function buildRows(now) {
-  const ops = state.ops || [];
-  const liveMap = new Map((state.live?.tracked || []).map((e) => [toAse1(e.address), e]));
-  const opByValidator = new Map(ops.filter((o) => o.validator).map((o) => [toAse1(o.validator), o]));
-  const rows = [];
-  const placed = new Set();
-  const make = (address, v, op) => {
-    const sig = v || op?.validator ? signingStatus(v, v ? liveMap.get(address) : null) : null;
-    const hb = op && Number(op.interval) > 0 ? opStatus(op, now) : null;
-    const rank = Math.min(sig ? RANK[sig.level] : 9, hb ? RANK[hb.level] : 9);
-    return { address, v, op, sig, hb, rank, stake: v ? BigInt(v.stake || '0') : 0n };
-  };
-  for (const v of state.part?.validators || []) {
-    const a = toAse1(v.address);
-    const op = opByValidator.get(a);
-    if (op) placed.add(op.addr);
-    rows.push(make(a, v, op));
-  }
-  for (const op of ops) {
-    if (!placed.has(op.addr)) rows.push(make(op.validator ? toAse1(op.validator) : '', null, op));
-  }
-  return rows.sort(
-    (a, b) =>
-      a.rank - b.rank ||
-      Number(Boolean(b.op)) - Number(Boolean(a.op)) ||
-      (b.stake > a.stake ? 1 : b.stake < a.stake ? -1 : 0) ||
-      (a.op?.name || a.address).localeCompare(b.op?.name || b.address),
-  );
-}
-
-const FILTERS = {
-  all: () => true,
-  problems: (r) => r.rank <= 1,
-  signing: (r) => r.sig?.key === 'signing',
-  outside: (r) => r.sig?.key === 'outside',
-  named: (r) => Boolean(r.op),
-};
-
 function cell(tr, cls, label) {
   const td = tr.insertCell();
   if (cls) td.className = cls;
@@ -888,18 +624,6 @@ function sub(text) {
   s.className = 'op-sub';
   if (text) s.textContent = text;
   return s;
-}
-
-// Where an offline node stopped, read from the chain. A stuck node can still call itself
-// in sync and active (its tooling compares against a peer that may be stuck at the same
-// height, 2026-10-29), so the page says it plainly when the network runs on without it.
-function stopHint(op, hb, tip, networkLevel) {
-  // A stalled or unreadable network explains itself in the banner and the hero.
-  if (networkLevel !== 'good' && networkLevel !== 'warning') return null;
-  if (hb.key !== 'offline' || !op.lastBlock || !tip || tip <= op.lastBlock) return null;
-  const fact = `Last beat landed in block #${fmtInt(op.lastBlock)}, the chain is ${fmtInt(tip - op.lastBlock)} blocks further.`;
-  if (networkLevel !== 'good') return fact;
-  return `${fact} The network is running, so check this node, even if it reports itself in sync.`;
 }
 
 function heartbeatCell(td, op, hb, now, hours, tip, networkLevel) {
@@ -967,7 +691,7 @@ function renderValidators(now, networkLevel) {
 
   const narrow = window.matchMedia('(max-width: 760px)').matches;
   const hours = narrow ? 24 : 48;
-  const rows = buildRows(now);
+  const rows = buildRows(state, now);
   document.querySelectorAll('[data-count]').forEach((n) => {
     n.textContent = fmtInt(rows.filter(FILTERS[n.dataset.count] || FILTERS.all).length);
   });
@@ -984,7 +708,7 @@ function renderValidators(now, networkLevel) {
   more.hidden = matches.length <= shown.length;
   more.textContent = `Show ${fmtInt(Math.min(PAGE_SIZE, matches.length - shown.length))} more of ${fmtInt(matches.length - shown.length)}`;
 
-  const blockMs = recentBlockTime()?.ms || 2400;
+  const blockMs = recentBlockTime(state.canary)?.ms || 2400;
   // Signatures are read less often than heads, so measure against their own head.
   const head = Number(state.part?.head) || state.heads?.tip || 0;
 
@@ -1125,7 +849,7 @@ async function poll() {
   if (due('live', t)) jobs.push(load('live', source.liveness));
   document.querySelectorAll('.plot').forEach((p) => p.classList.add('refreshing'));
   await Promise.allSettled(jobs);
-  if (state.heads) trackFinality(state.heads.finalized, source.now());
+  if (state.heads) state.finalSeen = nextFinality(state.finalSeen, state.heads.finalized, source.now());
   document.querySelectorAll('.plot').forEach((p) => p.classList.remove('refreshing'));
   if (!state.errors.heads && !state.errors.chain) state.updatedAt = source.now();
   renderAll();
@@ -1155,18 +879,18 @@ $('filter').addEventListener('click', (e) => {
   filter = btn.dataset.filter;
   showCount = PAGE_SIZE;
   document.querySelectorAll('#filter button').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
-  renderValidators(source.now(), verdict(source.now()).level);
+  renderValidators(source.now(), verdict(state, source.now(), rpcHost).level);
 });
 
 $('search').addEventListener('input', (e) => {
   query = e.target.value;
   showCount = PAGE_SIZE;
-  renderValidators(source.now(), verdict(source.now()).level);
+  renderValidators(source.now(), verdict(state, source.now(), rpcHost).level);
 });
 
 $('op-more').addEventListener('click', () => {
   showCount += PAGE_SIZE;
-  renderValidators(source.now(), verdict(source.now()).level);
+  renderValidators(source.now(), verdict(state, source.now(), rpcHost).level);
 });
 
 const root = document.documentElement;

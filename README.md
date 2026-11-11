@@ -51,10 +51,12 @@ it compares against is stuck at the same height.
 
 ```
 contracts/   heartbeat-registry.js, canary.js   (deployed as plain JS source)
-site/        the status page (static; vendor/ holds the bundled @asentum/sdk)
+site/        the status page (static; logic.js does the arithmetic, app.js draws;
+             vendor/ holds the bundled @asentum/sdk)
 sender/      heartbeat.mjs CLI and systemd unit, timer and env example
 scripts/     keygen.mjs, deploy.mjs, check.mjs, shared helpers
-test/        SES test runtime, contract tests, mock node, end-to-end tests
+test/        SES test runtime, contract tests, mock node, end-to-end tests,
+             page logic tests
 ```
 
 ## Operators: name your validator
@@ -165,7 +167,7 @@ contracts and can call `removeOperator(address)` on the registry and
 ## Development
 
 ```sh
-npm test                            # contracts in an SES sandbox + end-to-end against a mock node
+npm test                            # contracts, end-to-end against a mock node, page logic
 python3 -m http.server -d site 8000 # then open http://localhost:8000/?demo
 npm run build:vendor                # rebuild site/vendor/asentum-sdk.js after an SDK upgrade
 ```
@@ -177,6 +179,11 @@ built-ins fail the same way they do on chain. The mock node
 (`test/mock-node.mjs`) decodes the real signed transactions from
 `@asentum/sdk`, derives the sender from the ML-DSA-65 key and runs the
 contracts, so `deploy.mjs` and `heartbeat.mjs` are tested end to end.
+
+The page keeps its arithmetic (verdicts, uptime, hourly rows, validator rows,
+number formats) in `site/logic.js`, which has no DOM, so
+`test/page-logic.test.mjs` checks it under Node. `site/app.js` only fetches and
+draws; the tests at least parse it.
 
 The page accepts overrides in the URL: `?rpc=…&registry=…&canary=…`, and
 `?demo` for made-up data.
