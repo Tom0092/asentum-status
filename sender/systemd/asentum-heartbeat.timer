@@ -2,9 +2,11 @@
 Description=Asentum Status: heartbeat every 5 minutes
 
 [Timer]
-OnBootSec=2min
-# Keep this equal to the --interval you registered with (300 s here).
-OnUnitActiveSec=5min
+# A fixed clock grid: :00, :05, :10 ... Keep the step equal to the --interval
+# you registered with (300 s here; 600 s would be *:0/10).
+# Not OnUnitActiveSec: there every random delay adds to the next start, the
+# real interval drifts to about 314 s and the page counts 11 beats an hour.
+OnCalendar=*:0/5
 RandomizedDelaySec=20s
 AccuracySec=5s
 

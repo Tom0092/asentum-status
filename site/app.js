@@ -262,30 +262,40 @@ function opStatus(op, now) {
 }
 
 // Per-hour uptime cells and the percentage over the shown window.
+// A beat is only expected once a full interval has passed (the newest one may
+// still be on its way), and the percentage compares window totals, so a beat
+// that lands just after the hour turns does not count as a miss in one hour
+// and a surplus in the next. Where the timer grid starts is unknown, so the
+// percentage is good to about one beat: a single missed beat in 48 h can still
+// read 100 %, the hour's cell still says "11 of 12".
 function opUptime(op, now, hours) {
   const iv = (Number(op.interval) || 300) * 1000;
   const endHour = Math.floor(now / HOUR);
   const startHour = endHour - hours + 1;
   const byHour = new Map((op.hist || []).map((b) => [b[0], b]));
   const joined = Number(op.joined) || 0;
+  const due = now - iv;
   let got = 0;
   let want = 0;
   const cells = [];
   for (let h = startHour; h <= endHour; h++) {
     const from = Math.max(h * HOUR, joined);
-    const to = Math.min((h + 1) * HOUR, now);
-    if (to <= from) {
-      cells.push({ h, level: 'x', beats: 0, expected: 0 });
+    const beats = byHour.get(h)?.[1] || 0;
+    if (Math.min((h + 1) * HOUR, now) <= from) {
+      cells.push({ h, level: 'x', beats: 0, expected: 0, why: 'not registered yet' });
       continue;
     }
-    const expected = Math.max(1, Math.floor((to - from) / iv));
-    const beats = byHour.get(h)?.[1] || 0;
-    const frac = Math.min(1, beats / expected);
-    got += Math.min(beats, expected);
+    const expected = Math.max(0, Math.floor((Math.min((h + 1) * HOUR, due) - from) / iv));
+    got += beats;
     want += expected;
+    if (!expected) {
+      cells.push({ h, level: beats ? 3 : 'x', beats, expected, why: beats ? '' : 'too early to tell' });
+      continue;
+    }
+    const frac = Math.min(1, beats / expected);
     cells.push({ h, level: frac >= 0.9 ? 3 : frac >= 0.5 ? 2 : frac > 0 ? 1 : 0, beats, expected });
   }
-  return { pct: want ? (got / want) * 100 : null, cells };
+  return { pct: want ? (Math.min(got, want) / want) * 100 : null, cells };
 }
 
 function opLatency(op) {
@@ -918,7 +928,11 @@ function heartbeatCell(td, op, hb, now, hours, tip, networkLevel) {
   for (const c of U.cells) {
     const s = document.createElement('span');
     s.dataset.l = String(c.level);
-    s.title = c.level === 'x' ? `${fmtClock(c.h * HOUR)}: not registered yet` : `${fmtClock(c.h * HOUR)}: ${c.beats} of ${c.expected} heartbeats`;
+    s.title = c.why
+      ? `${fmtClock(c.h * HOUR)}: ${c.why}`
+      : c.expected
+        ? `${fmtClock(c.h * HOUR)}: ${c.beats} of ${c.expected} heartbeats`
+        : `${fmtClock(c.h * HOUR)}: ${c.beats} ${c.beats === 1 ? 'heartbeat' : 'heartbeats'} so far`;
     cells.append(s);
   }
   wrap.append(pct, cells);

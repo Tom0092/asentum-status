@@ -126,9 +126,11 @@ relaying transactions, even while it keeps signing blocks.
 `beat` exit codes: 0 landed, 2 stuck (not in a block within `HB_TIMEOUT_MS`),
 3 rejected by the node, 4 RPC unreachable, 5 failed in a block.
 
-Keep the timer interval equal to the `--interval` you registered with. The
-page counts a heartbeat as late after two missed intervals and offline after
-six.
+Keep the timer step equal to the `--interval` you registered with: the timer
+fires on a fixed clock grid (`OnCalendar=*:0/5` for 300 s, `*:0/10` for
+600 s), so the random delay that spreads the load does not add up and stretch
+the interval. The page counts a heartbeat as late after two missed intervals
+and offline after six.
 
 ## Deploy (maintainers)
 
