@@ -193,6 +193,16 @@ The page accepts overrides in the URL: `?rpc=…&registry=…&canary=…`, and
   them.
 - Heartbeats show that a transaction from your machine lands. They don't
   replace your node's own metrics.
+- **Names are claims, not proof.** The registry does not check that you
+  operate the validator you name. Anyone can put a name on any validator
+  first, and the real operator then gets "this validator already has a
+  name". Report it; the owner removes the entry with `removeOperator`.
+- **Extra canary jobs count.** Anyone can schedule another cron job on
+  `tick()`. Runs within half an interval of the last tick are ignored, but a
+  second job offset by 30 s or more doubles the ticks: the hourly "minutes
+  without a tick" chart can then hide real gaps and the two-hour chart
+  covers one hour. The stall list stays right, it works from the gaps
+  between ticks. Fixing either needs a new contract version.
 - A community project, not run by or affiliated with the Asentum team.
 
 ## License
