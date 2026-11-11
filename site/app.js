@@ -97,10 +97,13 @@ const fmtSec = (ms, digits = 1) => `${(ms / 1000).toFixed(digits)} s`;
 
 function fmtDur(ms) {
   ms = Math.max(0, ms);
-  if (ms < 60000) return `${Math.round(ms / 1000)} s`;
-  if (ms < HOUR) return `${Math.round(ms / MIN)} min`;
-  const h = Math.floor(ms / HOUR);
-  const m = Math.round((ms % HOUR) / MIN);
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s} s`;
+  // Round to whole minutes first, then split: 1 h 59.6 min is "2 h", not "1 h 60 min".
+  const total = Math.round(ms / MIN);
+  if (total < 60) return `${total} min`;
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   if (h >= 48) return `${Math.round(h / 24)} days`;
   return m ? `${h} h ${m} min` : `${h} h`;
 }
@@ -817,6 +820,12 @@ const RANK = { critical: 0, warning: 1, good: 2, neutral: 3 };
 // Status from the validator's own signatures (node data, nothing to install).
 function signingStatus(v, live) {
   const p = state.part;
+  // Without the participation list there is no way to tell; "not bonded" would be a guess.
+  if (!v && !p) {
+    return state.errors.part
+      ? { key: 'unknown', level: 'neutral', label: 'Signature data unavailable', sub: 'The node did not answer; retrying' }
+      : { key: 'unknown', level: 'neutral', label: 'Loading signatures…', sub: '' };
+  }
   if (!v) return { key: 'none', level: 'neutral', label: 'Not in the validator set', sub: 'This address is not bonded' };
   const misses = Number(live?.consecutiveMisses) || 0;
   const maxMisses = Number(state.live?.maxConsecutiveMisses) || 0;
