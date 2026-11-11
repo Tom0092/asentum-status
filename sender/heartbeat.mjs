@@ -16,6 +16,9 @@
 //                  Point it at your own node to test that your node relays transactions.
 //   HB_REGISTRY    registry address (default: the one in site/config.js)
 //   HB_TIMEOUT_MS  how long a beat may take to land before it counts as stuck (default 90000)
+//   HB_DEADLINE_MS hard limit for the whole beat, sending included (default HB_TIMEOUT_MS + 35000).
+//                  Keep it well below TimeoutStartSec in the systemd unit, or systemd kills
+//                  the sender before it can record the failure and alert.
 //   HB_ALERT_URL   optional: POSTed on failure and on recovery (ntfy topic URL or any webhook)
 //   HB_ALERT_AFTER failed beats in a row before the failure alert goes out (default 3)
 //   HB_STATE_DIR   where the last result is kept for recovery alerts (default: next to the key)
@@ -47,6 +50,7 @@ const [cmd, ...rest] = positionals;
 const RPC = process.env.HB_RPC || 'https://testnet.asentum.com';
 const KEYFILE = process.env.HB_KEYFILE || here('keys/heartbeat.json');
 const TIMEOUT = Number(process.env.HB_TIMEOUT_MS) || 90000;
+const DEADLINE = Number(process.env.HB_DEADLINE_MS) || TIMEOUT + 35000;
 const ALERT_URL = process.env.HB_ALERT_URL || '';
 const ALERT_AFTER = Math.max(1, Math.trunc(Number(process.env.HB_ALERT_AFTER)) || 3);
 const STATE_DIR = process.env.HB_STATE_DIR || dirname(KEYFILE);
@@ -83,6 +87,18 @@ function validatorArg(fallback) {
   if (!v || v === 'none') return '';
   if (!isAse1(v) && !/^0x[0-9a-fA-F]{40}$/.test(v)) throw new Exit(1, '--validator must be an ase1 address (or "none")');
   return v;
+}
+
+// Race a step against the beat's deadline. Retries inside the SDK (and its nonce
+// and key lookups, which take no abort signal) can otherwise run past systemd's
+// TimeoutStartSec, and a killed sender never records the failure or alerts.
+function beforeDeadline(promise, deadlineAt, onLate) {
+  promise.catch(() => {}); // the loser of the race must not become an unhandled rejection
+  let timer;
+  const late = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(onLate()), Math.max(0, deadlineAt - Date.now()));
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
 async function send(registry, wallet, method, args) {
@@ -183,13 +199,19 @@ const commands = {
     const w = loadWallet(client, KEYFILE);
     const prev = readState();
     const sentAt = Date.now();
+    const deadlineAt = sentAt + DEADLINE;
+    const abort = new AbortController();
     const result = { at: new Date(sentAt).toISOString(), rpc: RPC };
     try {
       const c = new AsentumContract(client, registry).connect(w);
       let tx;
       try {
-        tx = await c.send('beat', [String(sentAt), VERSION]);
+        tx = await beforeDeadline(c.send('beat', [String(sentAt), VERSION], { signal: abort.signal }), deadlineAt, () => {
+          abort.abort();
+          return new Exit(4, `no answer from ${RPC} within ${Math.round(DEADLINE / 1000)} s while sending`);
+        });
       } catch (e) {
+        if (e instanceof Exit) throw e;
         if (e instanceof TxRejectedError) throw new Exit(3, `rejected by the node: ${e.reason}`);
         if (e instanceof NetworkError) throw new Exit(4, `could not reach ${RPC}: ${describeError(e)}`);
         throw e;
@@ -197,8 +219,13 @@ const commands = {
       result.hash = tx.hash;
       let r;
       try {
-        r = await tx.wait({ timeoutMs: TIMEOUT });
+        const wait = tx.wait({ timeoutMs: TIMEOUT, signal: abort.signal });
+        r = await beforeDeadline(wait, deadlineAt, () => {
+          abort.abort();
+          return new Exit(2, `not in a block after ${Math.round((Date.now() - sentAt) / 1000)} s (deadline, tx ${tx.hash})`);
+        });
       } catch (e) {
+        if (e instanceof Exit) throw e;
         if (e instanceof TimeoutError) throw new Exit(2, `not in a block after ${Math.round(TIMEOUT / 1000)} s (tx ${tx.hash})`);
         if (e instanceof NetworkError) throw new Exit(4, `lost ${RPC} while waiting: ${describeError(e)}`);
         throw e;

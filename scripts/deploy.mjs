@@ -72,10 +72,18 @@ async function deployContract(wallet, key, file) {
   return c.address;
 }
 
-async function initOnce(wallet, addr, statusMethod, args, label) {
+// init() is open to the first caller. If someone else got there between our
+// deploy and our init, they own the contract (for the canary also the cron
+// address that may call tick), so stop instead of publishing its address.
+async function initOnce(wallet, addr, statusMethod, args, label, stateKey) {
   const s = await view(addr, statusMethod);
   if (s && s.owner) {
-    if (s.owner !== wallet.addressHex) log(`  note: ${label} is owned by ${s.owner}, not by this key`);
+    if (String(s.owner).toLowerCase() !== String(wallet.addressHex).toLowerCase()) {
+      throw new Error(
+        `${label} at ${addr} is owned by ${s.owner}, not by this key (${wallet.addressHex}). ` +
+          `Someone else initialized it, or ownership was transferred. To deploy a fresh one, remove "${stateKey}" and "${stateKey}Tx" from ${STATE}.`,
+      );
+    }
     return;
   }
   log(`Initializing ${label}…`);
@@ -104,11 +112,11 @@ async function main() {
 
   // 1. Heartbeat registry
   const registry = await deployContract(wallet, 'registry', 'contracts/heartbeat-registry.js');
-  await initOnce(wallet, registry, 'info', [], 'the operator registry');
+  await initOnce(wallet, registry, 'info', [], 'the operator registry', 'registry');
 
   // 2. Canary
   const canary = await deployContract(wallet, 'canary', 'contracts/canary.js');
-  await initOnce(wallet, canary, 'status', [CRON_REGISTRY, INTERVAL], 'the canary');
+  await initOnce(wallet, canary, 'status', [CRON_REGISTRY, INTERVAL], 'the canary', 'canary');
 
   // 3. Schedule the canary on the cron registry (the wallet owns the job).
   if (!state.job) {

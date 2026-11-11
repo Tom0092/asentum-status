@@ -88,6 +88,7 @@ export async function startMockNode({ startMs = Date.now() } = {}) {
     nonces: new Map(),
     receipts: new Map(),
     dropTx: false, // when true, /tx accepts but never mines (a stuck node)
+    hangTx: false, // when true, /tx never answers at all (a node that hangs)
     txLog: [],
     validators: new Map(), // hex address -> participation status
 
@@ -207,7 +208,10 @@ export async function startMockNode({ startMs = Date.now() } = {}) {
         return send({ address: a, balance: String(node.balances.get(a) || 0n), nonce: n, pendingNonce: n });
       }
       if (p.startsWith('/public-key/')) return send({ address: decodeURIComponent(p.slice(12)), recorded: false, keyHash: null, keylessActive: false, keylessFromBlock: null, nextBlock: String(node.chain.block + 1n), canOmitKey: false });
-      if (p === '/tx' && req.method === 'POST') return send(execute(JSON.parse(body).rawTx));
+      if (p === '/tx' && req.method === 'POST') {
+        if (node.hangTx) return; // leave the request open; close() drops the socket
+        return send(execute(JSON.parse(body).rawTx));
+      }
       if (p.startsWith('/receipts/')) {
         const r = node.receipts.get(decodeURIComponent(p.slice(10)));
         return send(r || { error: 'receipt not found' });
@@ -239,6 +243,9 @@ export async function startMockNode({ startMs = Date.now() } = {}) {
 
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   node.url = `http://127.0.0.1:${server.address().port}`;
-  node.close = () => new Promise((r) => server.close(r));
+  node.close = () => {
+    server.closeAllConnections();
+    return new Promise((r) => server.close(r));
+  };
   return node;
 }

@@ -108,6 +108,16 @@ test('deploy: registry and canary deployed, canary scheduled, config written, re
   assert.equal(node.txLog.length, txs, 'a re-run sends no transactions');
 
   writeFileSync(join(dir, 'registry.txt'), cfg.registry);
+
+  // A contract initialized by someone else: deploy stops and leaves the page config alone.
+  const otherKey = join(dir, 'other.json');
+  assert.equal((await run('scripts/keygen.mjs', [otherKey], {})).code, 0);
+  node.fund(JSON.parse(readFileSync(otherKey, 'utf8')).address, ASE);
+  const configBefore = readFileSync(env.STATUS_CONFIG, 'utf8');
+  const foreign = await run('scripts/deploy.mjs', [], { ...env, DEPLOY_KEY: otherKey });
+  assert.equal(foreign.code, 1);
+  assert.match(foreign.stderr, /the operator registry at .* is owned by 0x[0-9a-f]{40}, not by this key/);
+  assert.equal(readFileSync(env.STATUS_CONFIG, 'utf8'), configBefore);
 });
 
 test('heartbeat sender: keygen, register, beat, failures, alerts, recovery, unregister', async () => {
@@ -192,6 +202,22 @@ test('heartbeat sender: keygen, register, beat, failures, alerts, recovery, unre
   assert.equal(b6.code, 0, b6.stderr);
   assert.equal(alerts.length, 3);
   assert.equal(alerts[2].title, 'Heartbeat recovered');
+
+  // A node that never answers the send: the sender gives up at HB_DEADLINE_MS
+  // (well before systemd's TimeoutStartSec), exits 4 and records the failure.
+  node.advance(60000);
+  node.hangTx = true;
+  const started = Date.now();
+  const b7 = await run('sender/heartbeat.mjs', ['beat'], { ...env, HB_DEADLINE_MS: '4000' });
+  node.hangTx = false;
+  assert.equal(b7.code, 4, b7.stderr);
+  assert.match(b7.stderr, /no answer from .* within 4 s while sending/);
+  assert.ok(Date.now() - started < 15000, `took ${Date.now() - started} ms`);
+  const st7 = JSON.parse(readFileSync(join(dir, 'hb', 'heartbeat-state.json'), 'utf8'));
+  assert.equal(st7.ok, false);
+  assert.equal(st7.code, 4);
+  assert.equal(st7.failures, 1);
+  assert.equal(alerts.length, 3, 'one failure stays below HB_ALERT_AFTER');
 
   const s = await hb('status');
   assert.equal(s.code, 0);
