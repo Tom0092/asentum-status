@@ -330,6 +330,11 @@ figcaption {
   fill: var(--crit);
 }
 
+.plot .nodata {
+  fill: var(--muted);
+  opacity: 0.5;
+}
+
 .plot .line {
   fill: none;
   stroke: var(--series);
@@ -547,6 +552,16 @@ h3 {
 
 .history h3 {
   margin-top: 2.5rem;
+}
+
+.history h3 + .section-note {
+  margin-top: 0.25rem;
+  font-size: var(--step--1);
+}
+
+.history-grid + .section-note {
+  margin-top: 1.5rem;
+  font-size: var(--step--1);
 }
 
 .incidents {

@@ -76,7 +76,38 @@
         </figure>
       </div>
       <h3>Stalls</h3>
+      <p class="section-note" id="incidents-note"></p>
       <ol class="incidents" id="incidents" reversed></ol>
+    </section>
+
+    <section class="history wrap" id="days" aria-labelledby="days-title" hidden>
+      <h2 id="days-title">Last 90 days</h2>
+      <p class="banner" id="days-stale" hidden></p>
+      <div class="history-grid">
+        <figure class="chart">
+          <figcaption>
+            <span class="chart-title">Minutes without a canary tick, per day</span>
+            <span class="chart-note">Zero is normal. A grey mark is a day without data.</span>
+          </figcaption>
+          <div class="plot" id="days-missed" tabindex="0" role="img" aria-label="Minutes without a canary tick per day, last 90 days"></div>
+          <details class="table-view">
+            <summary>Show as table</summary>
+            <div class="table-scroll" id="days-missed-table"></div>
+          </details>
+        </figure>
+        <figure class="chart">
+          <figcaption>
+            <span class="chart-title">Average block time, per day</span>
+            <span class="chart-note">Seconds between blocks, measured by the canary.</span>
+          </figcaption>
+          <div class="plot" id="days-blocktime" tabindex="0" role="img" aria-label="Average block time per day, last 90 days"></div>
+          <details class="table-view">
+            <summary>Show as table</summary>
+            <div class="table-scroll" id="days-blocktime-table"></div>
+          </details>
+        </figure>
+      </div>
+      <p class="section-note" id="days-updated"></p>
     </section>
 
     <section class="operators wrap" id="operators" aria-labelledby="operators-title">
@@ -145,7 +176,7 @@ cd asentum-status &amp;&amp; npm ci --omit=dev</code></pre>
 
   <footer class="foot wrap">
     <p>A community project. Not run by or affiliated with the Asentum team.</p>
-    <p id="foot-data">This page has no server: it reads the chain directly from your browser.</p>
+    <p id="foot-data">No server: your browser reads the chain. A GitHub Action adds the daily history every six hours.</p>
     <ul class="foot-links" id="foot-links"></ul>
   </footer>
 

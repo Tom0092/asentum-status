@@ -6,7 +6,8 @@ my node or the network?**
 
 A static page on GitHub Pages reads everything straight from the chain in your
 browser: block signatures from the node API, plus two small JavaScript
-contracts. There is no server and no database.
+contracts. There is no server and no database; a scheduled GitHub Action adds
+a daily history file.
 
 ![Status page](docs/screenshot.png)
 
@@ -36,9 +37,17 @@ signatures can't:
   inclusion latency (block time minus the time the sender signed it) and 48
   hourly buckets for uptime.
 
+**The daily history.** The canary keeps only 48 hours. Every six hours the
+Pages workflow runs `scripts/collect.mjs`, which folds each finished UTC day
+into one row (ticks, minutes without a tick, longest gap, blocks, block time),
+keeps every stall and samples how many validators sign. It keeps 90 days in
+`history.json` on the branch `data` and publishes the file next to the page.
+Only the workflow writes to `data`; don't commit there.
+
 **The page** (`site/`) shows the verdict, blocks per minute for the last two
-hours, the last 48 hours of stalls and block times, and every validator with
-its signature status, last signature and, if registered, name and heartbeat.
+hours, the last 48 hours and the last 90 days of stalls and block times, and
+every validator with its signature status, last signature and, if registered,
+name and heartbeat.
 
 Reading it: if the canary is fine but your validator stops signing or your
 heartbeat is late, look at your node. If the canary stalls, everybody is
@@ -54,7 +63,8 @@ contracts/   heartbeat-registry.js, canary.js   (deployed as plain JS source)
 site/        the status page (static; logic.js does the arithmetic, app.js draws;
              vendor/ holds the bundled @asentum/sdk)
 sender/      heartbeat.mjs CLI and systemd unit, timer and env example
-scripts/     keygen.mjs, deploy.mjs, check.mjs, shared helpers
+scripts/     keygen.mjs, deploy.mjs, check.mjs, collect.mjs (daily history),
+             shared helpers
 test/        SES test runtime, contract tests, mock node, end-to-end tests,
              page logic tests
 ```
@@ -153,7 +163,8 @@ the addresses into `site/config.js`. It keeps its progress in
 `deploy-state.json`, so if anything times out, run it again and it continues.
 
 Then in the repository settings: **Pages, Source: GitHub Actions**. The
-`pages.yml` workflow publishes `site/` on every push to `main`.
+`pages.yml` workflow publishes `site/` on every push to `main` and every six
+hours; its first run creates the `data` branch.
 
 **Canary escrow.** Each tick is paid from the escrow sent with `schedule`
 (at 1 wei per gas, 1 ASE lasts practically forever). Anyone can add to it by
@@ -170,6 +181,7 @@ contracts and can call `removeOperator(address)` on the registry and
 npm test                            # contracts, end-to-end against a mock node, page logic
 python3 -m http.server -d site 8000 # then open http://localhost:8000/?demo
 npm run build:vendor                # rebuild site/vendor/asentum-sdk.js after an SDK upgrade
+node scripts/collect.mjs --out /tmp/h && cp /tmp/h/history.json site/   # preview the 90 days
 ```
 
 The test runtime (`test/runtime.mjs`) runs the contracts in a Hardened
@@ -210,6 +222,13 @@ The page accepts overrides in the URL: `?rpc=…&registry=…&canary=…`, and
   without a tick" chart can then hide real gaps and the two-hour chart
   covers one hour. The stall list stays right, it works from the gaps
   between ticks. Fixing either needs a new contract version.
+- **The daily history needs its Action.** GitHub pauses scheduled workflows
+  in public repositories after 60 days without activity, and it is not
+  documented whether the workflow's own commits on `data` count. When the
+  history is more than a day old the page says so; enable the workflow again
+  under Actions and run it by hand. A day the collector misses until
+  midnight UTC of the next day is lost (the canary keeps 48 hours) and shows
+  as a grey mark.
 - A community project, not run by or affiliated with the Asentum team.
 
 ## License

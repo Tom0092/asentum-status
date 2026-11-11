@@ -16,7 +16,7 @@ const hex = (n) => '0x' + n.toString(16).padStart(40, '0');
 
 export function createDemoSource() {
   const t0 = Date.now();
-  const tip0 = 712340;
+  const tip0 = 3712340; // about 105 days of blocks, so the 90-day demo history has real heights
   const blockMs = 2450;
   const tipAt = (t) => tip0 + Math.floor((t - t0) / blockMs);
 
@@ -190,6 +190,33 @@ export function createDemoSource() {
     };
   }
 
+  // 90 days as scripts/collect.mjs writes them: mostly quiet, a slow week,
+  // two bad days and one day the collector missed.
+  function history(now) {
+    const r = rng(11);
+    const DAY = 24 * HOUR;
+    const end = Math.floor(now / DAY) - 1;
+    const days = [];
+    const incidents = [];
+    const signing = [];
+    for (let d = end - 89; d <= end; d++) {
+      const day = new Date(d * DAY).toISOString().slice(0, 10);
+      signing.push({ day, runs: 4, signing: 4 * (86 + Math.floor(r() * 7)), total: 4 * 240 });
+      if (d === end - 23) continue;
+      const bad = d === end - 61 || d === end - 12;
+      const slow = d > end - 40 && d < end - 32;
+      const missedMin = bad ? 40 + Math.floor(r() * 80) : r() < 0.15 ? 1 + Math.floor(r() * 5) : 0;
+      const ms = (slow ? 2900 : 2440) + Math.round(r() * 120);
+      const gap = (missedMin + 1) * MIN;
+      days.push({ day, ticks: 1440 - missedMin, missedMin, maxGapMs: missedMin ? gap : 61000, blocks: Math.round((24 * HOUR) / ms), blockMs: ms });
+      if (missedMin >= 2) {
+        const from = d * DAY + Math.floor(r() * 20) * HOUR;
+        incidents.push({ from, to: from + gap, gap, fromBlock: tipAt(from), toBlock: tipAt(from) + Math.ceil(gap / 9000) });
+      }
+    }
+    return { version: 1, updated: now - 2 * HOUR - 17 * MIN, canary: '', intervalMs: MIN, days, incidents, signing };
+  }
+
   const wait = (v) => new Promise((res) => setTimeout(() => res(v), 120));
 
   return {
@@ -206,5 +233,6 @@ export function createDemoSource() {
     operators: () => wait(operators(Date.now())),
     participation: () => wait(participation(Date.now())),
     liveness: () => wait(liveness(Date.now())),
+    history: () => wait(history(Date.now())),
   };
 }

@@ -16,6 +16,9 @@ import {
   opLatency,
   niceScale,
   hourRows,
+  DAY,
+  daySlots,
+  mergeIncidents,
   buildRows,
   stopHint,
   FILTERS,
@@ -89,6 +92,15 @@ function chainSource() {
     },
     participation: () => client.getParticipation({ lookback: 1000 }),
     liveness: () => client.getLiveness(),
+    // Written next to the page by the Pages workflow (scripts/collect.mjs).
+    // It describes the configured canary only, not one given in the URL.
+    async history() {
+      const r = await fetch('history.json', { cache: 'no-cache' });
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`history.json: HTTP ${r.status}`);
+      const h = await r.json();
+      return h.canary === cfg.canary ? h : null;
+    },
   };
 }
 
@@ -101,6 +113,7 @@ const state = {
   ops: null,
   part: null,
   live: null,
+  history: null,
   finalSeen: null,
   errors: {},
   updatedAt: 0,
@@ -112,6 +125,8 @@ const state = {
 const fmtClock = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 const fmtClockSec = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const fmtDay = (t) => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+// A UTC day ('YYYY-MM-DD') from the daily history.
+const fmtDate = (key) => new Date(Date.parse(key)).toLocaleDateString([], { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
 function explorerLink(addr, text) {
   const a1 = toAse1(addr);
@@ -406,6 +421,103 @@ function renderPulse(now) {
   );
 }
 
+// Bars on a grid of `slots` columns; each item names its column in `i`.
+function barChart(box, items, { slots, value, floor, labels, describe }) {
+  const { svg, w, h } = frame(box);
+  const left = 34;
+  const right = w - 4;
+  const top = 12;
+  const base = h - 24;
+  const slotW = (right - left) / slots;
+  const bw = Math.max(2, Math.min(24, slotW - 2));
+  const xOf = (i) => left + i * slotW + (slotW - bw) / 2;
+  const scale = niceScale(Math.max(...items.map(value)), floor, 3);
+  const yOf = (v) => base - (v / scale.max) * (base - top);
+
+  yGrid(svg, { left, right, top, base, ...scale });
+  xLabels(svg, labels(left, right), h - 6);
+
+  const nodes = items.map((it) =>
+    value(it) > 0 ? svgEl('path', { class: 'bar', d: barPath(xOf(it.i), yOf(value(it)), bw, base) }, svg) : null,
+  );
+  attachHover(box, items, {
+    xOf: (it) => xOf(it.i) + bw / 2,
+    highlight: (k) => nodes.forEach((n, j) => n?.classList.toggle('is-active', j === k)),
+    describe,
+  });
+  return { svg, xOf, bw, base };
+}
+
+// A line over a grid of `slots` columns, broken where a column has no item.
+function lineChart(box, items, { slots, value, floor, labels, describe, endLabel }) {
+  const { svg, w, h } = frame(box);
+  const left = 34;
+  const right = w - 44;
+  const top = 12;
+  const base = h - 24;
+  const slotW = (right - left) / slots;
+  const xOf = (it) => left + it.i * slotW + slotW / 2;
+  const scale = niceScale(Math.max(...items.map(value)) * 1.15, floor, 4);
+  const yOf = (v) => base - (v / scale.max) * (base - top);
+
+  yGrid(svg, { left, right, top, base, ...scale });
+  xLabels(svg, labels(left, right), h - 6);
+
+  const segments = [];
+  let seg = [];
+  items.forEach((it, k) => {
+    if (k > 0 && it.i !== items[k - 1].i + 1) {
+      segments.push(seg);
+      seg = [];
+    }
+    seg.push(it);
+  });
+  segments.push(seg);
+  for (const s of segments) {
+    if (s.length === 1) {
+      svgEl('circle', { class: 'dot', cx: xOf(s[0]), cy: yOf(value(s[0])), r: 3 }, svg);
+      continue;
+    }
+    const pts = s.map((it) => `${xOf(it).toFixed(1)},${yOf(value(it)).toFixed(1)}`);
+    svgEl('path', { class: 'area', d: `M${xOf(s[0])},${base}L${pts.join('L')}L${xOf(s[s.length - 1])},${base}Z` }, svg);
+    svgEl('path', { class: 'line', d: `M${pts.join('L')}` }, svg);
+  }
+  const last = items[items.length - 1];
+  svgEl('circle', { class: 'dot', cx: xOf(last), cy: yOf(value(last)), r: 4 }, svg);
+  const lbl = svgEl('text', { class: 'end-label', x: xOf(last) + 8, y: yOf(value(last)) + 4 }, svg);
+  lbl.textContent = endLabel(last);
+
+  const cursor = svgEl('line', { class: 'cursor', x1: 0, x2: 0, y1: top, y2: base, visibility: 'hidden' }, svg);
+  const marker = svgEl('circle', { class: 'dot', r: 4, visibility: 'hidden' }, svg);
+  attachHover(box, items, {
+    xOf,
+    highlight: (k) => {
+      const vis = k < 0 ? 'hidden' : 'visible';
+      cursor.setAttribute('visibility', vis);
+      marker.setAttribute('visibility', vis);
+      if (k < 0) return;
+      const x = Math.round(xOf(items[k])) + 0.5;
+      cursor.setAttribute('x1', x);
+      cursor.setAttribute('x2', x);
+      marker.setAttribute('cx', xOf(items[k]));
+      marker.setAttribute('cy', yOf(value(items[k])));
+    },
+    describe,
+  });
+}
+
+const hourLabels = (left, right) => [
+  { x: left, text: '48 h ago', anchor: 'start' },
+  { x: left + (right - left) / 2, text: '24 h ago' },
+  { x: right, text: 'now', anchor: 'end' },
+];
+
+// Hour rows with their column on the 48-hour grid.
+function hourItems(now, rows) {
+  const first = Math.floor(now / HOUR) - 47;
+  return rows.map((r) => ({ ...r, i: r.h - first }));
+}
+
 function renderMissed(now) {
   const box = $('missed');
   const rows = hourRows(state.canary, now);
@@ -414,36 +526,11 @@ function renderMissed(now) {
     fillTable('missed-table', [['Hour'], ['Minutes without a tick', 1], ['Longest gap', 1]], []);
     return;
   }
-  const { svg, w, h } = frame(box);
-  const left = 34;
-  const right = w - 4;
-  const top = 12;
-  const base = h - 24;
-  const endHour = Math.floor(now / HOUR);
-  const slotW = (right - left) / 48;
-  const bw = Math.max(2, Math.min(24, slotW - 2));
-  const xOf = (hr) => left + (hr - (endHour - 47)) * slotW + (slotW - bw) / 2;
-  const scale = niceScale(Math.max(...rows.map((r) => r.missedMin)), 5, 3);
-  const max = scale.max;
-  const yOf = (v) => base - (v / max) * (base - top);
-
-  yGrid(svg, { left, right, top, base, ...scale });
-  xLabels(
-    svg,
-    [
-      { x: left, text: '48 h ago', anchor: 'start' },
-      { x: left + (right - left) / 2, text: '24 h ago' },
-      { x: right, text: 'now', anchor: 'end' },
-    ],
-    h - 6,
-  );
-
-  const nodes = rows.map((r) =>
-    r.missedMin > 0 ? svgEl('path', { class: 'bar', d: barPath(xOf(r.h), yOf(r.missedMin), bw, base) }, svg) : null,
-  );
-  attachHover(box, rows, {
-    xOf: (r) => xOf(r.h) + bw / 2,
-    highlight: (i) => nodes.forEach((n, j) => n?.classList.toggle('is-active', j === i)),
+  barChart(box, hourItems(now, rows), {
+    slots: 48,
+    value: (r) => r.missedMin,
+    floor: 5,
+    labels: hourLabels,
     describe: (r) => [
       r.missedMin > 0 ? `${fmtInt(r.missedMin)} min without a tick` : 'No missed minutes',
       `${fmtClock(r.h * HOUR)} to ${fmtClock((r.h + 1) * HOUR)}`,
@@ -465,69 +552,12 @@ function renderBlockTime(now) {
     fillTable('blocktime-table', [['Hour'], ['Seconds per block', 1], ['Blocks', 1]], []);
     return;
   }
-  const { svg, w, h } = frame(box);
-  const left = 34;
-  const right = w - 44;
-  const top = 12;
-  const base = h - 24;
-  const endHour = Math.floor(now / HOUR);
-  const slotW = (right - left) / 48;
-  const xOf = (hr) => left + (hr - (endHour - 47)) * slotW + slotW / 2;
-  const scale = niceScale(Math.max(...rows.map((r) => r.blockMs / 1000)) * 1.15, 3, 4);
-  const max = scale.max;
-  const yOf = (v) => base - (v / max) * (base - top);
-
-  yGrid(svg, { left, right, top, base, ...scale });
-  xLabels(
-    svg,
-    [
-      { x: left, text: '48 h ago', anchor: 'start' },
-      { x: left + (right - left) / 2, text: '24 h ago' },
-      { x: right, text: 'now', anchor: 'end' },
-    ],
-    h - 6,
-  );
-
-  // Break the line where an hour has no data.
-  const segments = [];
-  let seg = [];
-  rows.forEach((r, i) => {
-    if (i > 0 && r.h !== rows[i - 1].h + 1) {
-      segments.push(seg);
-      seg = [];
-    }
-    seg.push(r);
-  });
-  segments.push(seg);
-  for (const s of segments) {
-    if (s.length === 1) {
-      svgEl('circle', { class: 'dot', cx: xOf(s[0].h), cy: yOf(s[0].blockMs / 1000), r: 3 }, svg);
-      continue;
-    }
-    const pts = s.map((r) => `${xOf(r.h).toFixed(1)},${yOf(r.blockMs / 1000).toFixed(1)}`);
-    svgEl('path', { class: 'area', d: `M${xOf(s[0].h)},${base}L${pts.join('L')}L${xOf(s[s.length - 1].h)},${base}Z` }, svg);
-    svgEl('path', { class: 'line', d: `M${pts.join('L')}` }, svg);
-  }
-  const lastRow = rows[rows.length - 1];
-  svgEl('circle', { class: 'dot', cx: xOf(lastRow.h), cy: yOf(lastRow.blockMs / 1000), r: 4 }, svg);
-  const lbl = svgEl('text', { class: 'end-label', x: xOf(lastRow.h) + 8, y: yOf(lastRow.blockMs / 1000) + 4 }, svg);
-  lbl.textContent = fmtSec(lastRow.blockMs, 2);
-
-  const cursor = svgEl('line', { class: 'cursor', x1: 0, x2: 0, y1: top, y2: base, visibility: 'hidden' }, svg);
-  const marker = svgEl('circle', { class: 'dot', r: 4, visibility: 'hidden' }, svg);
-  attachHover(box, rows, {
-    xOf: (r) => xOf(r.h),
-    highlight: (i) => {
-      const vis = i < 0 ? 'hidden' : 'visible';
-      cursor.setAttribute('visibility', vis);
-      marker.setAttribute('visibility', vis);
-      if (i < 0) return;
-      const x = Math.round(xOf(rows[i].h)) + 0.5;
-      cursor.setAttribute('x1', x);
-      cursor.setAttribute('x2', x);
-      marker.setAttribute('cx', xOf(rows[i].h));
-      marker.setAttribute('cy', yOf(rows[i].blockMs / 1000));
-    },
+  lineChart(box, hourItems(now, rows), {
+    slots: 48,
+    value: (r) => r.blockMs / 1000,
+    floor: 3,
+    labels: hourLabels,
+    endLabel: (r) => fmtSec(r.blockMs, 2),
     describe: (r) => [`${fmtSec(r.blockMs, 2)} per block`, `${fmtClock(r.h * HOUR)} to ${fmtClock((r.h + 1) * HOUR)}`, `${fmtInt(r.blocks)} blocks`],
   });
   fillTable(
@@ -537,10 +567,93 @@ function renderBlockTime(now) {
   );
 }
 
+// "Last 90 days", from history.json (scripts/collect.mjs). Hidden while there
+// is none, for example on a fork whose Pages workflow has not run yet.
+function renderDays(now) {
+  const h = state.history;
+  const slots = daySlots(h, now);
+  $('days').hidden = !slots.length;
+  if (!slots.length) return;
+
+  const age = now - h.updated;
+  const stale = $('days-stale');
+  stale.hidden = age < DAY;
+  stale.textContent = `The daily history was last collected ${fmtAgo(age)}. Its GitHub Action may have stopped: GitHub pauses scheduled workflows in repositories without activity for 60 days.`;
+  $('days-updated').textContent = `Collected every six hours by a GitHub Action, last ${fmtAgo(age)}. Days are UTC. The history starts on ${fmtDate(h.days[0].day)}.`;
+
+  const labels = (left, right) => [
+    { x: left, text: fmtDate(slots[0].day), anchor: 'start' },
+    { x: right, text: fmtDate(slots[slots.length - 1].day), anchor: 'end' },
+  ];
+  const kept = [...slots].reverse().filter((s) => !s.before);
+
+  const { svg, xOf, bw, base } = barChart($('days-missed'), slots, {
+    slots: slots.length,
+    value: (s) => s.row?.missedMin || 0,
+    floor: 30,
+    labels,
+    describe: (s) => {
+      if (!s.row) return [s.before ? 'Before the history started' : 'No data for this day', fmtDate(s.day)];
+      const r = s.row;
+      return [
+        r.missedMin > 0 ? `${fmtInt(r.missedMin)} min without a tick` : 'No missed minutes',
+        fmtDate(s.day),
+        r.ticks ? `${s.stalls ? `${fmtInt(s.stalls)} ${s.stalls === 1 ? 'stall' : 'stalls'}, l` : 'L'}ongest gap ${fmtDur(r.maxGapMs)}` : 'No ticks this day',
+      ];
+    },
+  });
+  for (const s of slots) {
+    if (!s.row && !s.before) svgEl('rect', { class: 'nodata', x: xOf(s.i), y: base - 3, width: bw, height: 3 }, svg);
+  }
+  fillTable(
+    'days-missed-table',
+    [['Day'], ['Minutes without a tick', 1], ['Stalls', 1], ['Longest gap', 1]],
+    kept.map((s) =>
+      s.row
+        ? [fmtDate(s.day), fmtInt(s.row.missedMin), fmtInt(s.stalls), s.row.ticks ? fmtDur(s.row.maxGapMs) : '–']
+        : [fmtDate(s.day), 'no data', '–', '–'],
+    ),
+  );
+
+  const box = $('days-blocktime');
+  const pts = slots.filter((s) => s.row?.blockMs);
+  if (pts.length < 2) {
+    emptyMessage(box, 'Not enough days yet.');
+  } else {
+    lineChart(box, pts, {
+      slots: slots.length,
+      value: (s) => s.row.blockMs / 1000,
+      floor: 3,
+      labels,
+      endLabel: (s) => fmtSec(s.row.blockMs, 2),
+      describe: (s) => [
+        `${fmtSec(s.row.blockMs, 2)} per block`,
+        fmtDate(s.day),
+        `${fmtInt(s.row.blocks)} blocks`,
+        ...(s.signing === null ? [] : [`${fmtInt(s.signing)} of ${fmtInt(s.total)} validators signing`]),
+      ],
+    });
+  }
+  fillTable(
+    'days-blocktime-table',
+    [['Day'], ['Seconds per block', 1], ['Blocks', 1], ['Validators signing', 1]],
+    kept.map((s) => [
+      fmtDate(s.day),
+      s.row?.blockMs ? (s.row.blockMs / 1000).toFixed(2) : '–',
+      s.row ? fmtInt(s.row.blocks) : '–',
+      s.signing === null ? '–' : `${fmtInt(s.signing)} of ${fmtInt(s.total)}`,
+    ]),
+  );
+}
+
 function renderIncidents() {
   const list = $('incidents');
   list.textContent = '';
-  const inc = [...(state.canary?.incidents || [])].reverse();
+  // The canary keeps its newest 20 stalls; the daily history keeps 90 days.
+  const inc = mergeIncidents(state.canary?.incidents, state.history?.incidents).reverse().slice(0, 30);
+  $('incidents-note').textContent = state.history
+    ? 'Gaps of three minutes or more between canary ticks. The newest 30 of the last 90 days.'
+    : 'Gaps of three minutes or more between canary ticks. The canary keeps the newest 20.';
   if (!inc.length) {
     const li = document.createElement('li');
     li.className = 'none';
@@ -800,6 +913,7 @@ function renderAll() {
   renderMissed(now);
   renderBlockTime(now);
   renderIncidents();
+  renderDays(now);
   renderValidators(now, v.level);
   renderUpdated(now);
 }
@@ -814,7 +928,8 @@ const SLOW_MS = 2 * MIN;
 // history (about 180 KB and seconds of work on the node) are the big responses.
 // Keep the canary at a minute: verdict() warns once the last tick looks older than
 // three intervals, and the time between reads adds to that age.
-const EVERY = { canary: MIN, ops: 2 * MIN, part: 10 * MIN, live: 2 * MIN };
+// history.json comes from the page's own host and changes every six hours.
+const EVERY = { canary: MIN, ops: 2 * MIN, part: 10 * MIN, live: 2 * MIN, history: 30 * MIN };
 const lastTry = {};
 let failures = 0;
 let timer = null;
@@ -847,6 +962,7 @@ async function poll() {
   if (due('ops', t)) jobs.push(load('ops', source.operators));
   if (due('part', t)) jobs.push(load('part', source.participation));
   if (due('live', t)) jobs.push(load('live', source.liveness));
+  if (due('history', t)) jobs.push(load('history', source.history));
   document.querySelectorAll('.plot').forEach((p) => p.classList.add('refreshing'));
   await Promise.allSettled(jobs);
   if (state.heads) state.finalSeen = nextFinality(state.finalSeen, state.heads.finalized, source.now());

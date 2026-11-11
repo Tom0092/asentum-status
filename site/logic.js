@@ -1,10 +1,15 @@
-// The status page's arithmetic: verdicts, uptime, hourly rows, validator rows,
-// number formats. No DOM and no globals, so it runs under node --test
-// (test/page-logic.test.mjs) as well as in the browser. app.js draws with it.
+// The status page's arithmetic: verdicts, uptime, hourly and daily rows,
+// validator rows, number formats. No DOM and no globals, so it runs under
+// node --test (test/page-logic.test.mjs) as well as in the browser. app.js draws
+// with it; scripts/history-lib.mjs shares the day and stall helpers.
 import { toAse1 } from './vendor/asentum-sdk.js';
 
 export const MIN = 60000;
 export const HOUR = 3600000;
+export const DAY = 24 * HOUR;
+
+// UTC day as 'YYYY-MM-DD'; Date.parse() reads it back as UTC midnight.
+export const dayKey = (t) => new Date(t).toISOString().slice(0, 10);
 
 const nf = new Intl.NumberFormat();
 export const fmtInt = (n) => (Number.isFinite(n) ? nf.format(Math.round(n)) : '–');
@@ -222,6 +227,53 @@ export function hourRows(canary, now) {
     });
   }
   return rows;
+}
+
+// Stalls from the canary (its newest 20) and from the daily history (90 days),
+// oldest first. The same stall usually sits in both.
+export function mergeIncidents(...lists) {
+  const byFrom = new Map();
+  for (const list of lists) {
+    for (const x of list || []) if (x && Number.isFinite(x.from)) byFrom.set(x.from, x);
+  }
+  return [...byFrom.values()].sort((a, b) => a.from - b.from);
+}
+
+// "Last 90 days": one slot per UTC day, from the oldest collected day (at least
+// 14 slots, at most 90) to the newest finished day. A day the collector missed
+// has row: null; slots before the first collected day are marked `before`.
+// Shortly after midnight UTC the collector has not run yet, so yesterday only
+// gets a slot once it has a row or another day has passed.
+export function daySlots(history, now) {
+  const days = history?.days || [];
+  if (!days.length) return [];
+  const byDay = new Map(days.map((r) => [r.day, r]));
+  const signing = new Map((history.signing || []).map((s) => [s.day, s]));
+  const stalls = new Map();
+  for (const x of history.incidents || []) {
+    const k = dayKey(x.from);
+    stalls.set(k, (stalls.get(k) || 0) + 1);
+  }
+  const first = Date.parse(days[0].day) / DAY;
+  const newest = Date.parse(days[days.length - 1].day) / DAY;
+  let end = Math.floor(now / DAY) - 1;
+  if (newest === end - 1) end -= 1;
+  const n = Math.min(90, Math.max(14, end - first + 1));
+  const slots = [];
+  for (let d = end - n + 1, i = 0; d <= end; d++, i++) {
+    const day = dayKey(d * DAY);
+    const s = signing.get(day);
+    slots.push({
+      i,
+      day,
+      before: d < first,
+      row: byDay.get(day) || null,
+      stalls: stalls.get(day) || 0,
+      signing: s && s.runs ? s.signing / s.runs : null,
+      total: s && s.runs ? s.total / s.runs : null,
+    });
+  }
+  return slots;
 }
 
 export const RANK = { critical: 0, warning: 1, good: 2, neutral: 3 };

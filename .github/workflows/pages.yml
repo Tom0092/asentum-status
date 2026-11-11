@@ -1,21 +1,32 @@
 name: Publish status page
 
+# One workflow collects the daily history and publishes the page: a push made
+# with GITHUB_TOKEN (the history commit) would not start a second workflow.
 on:
   push:
     branches: [main]
     paths:
       - 'site/**'
+      - 'scripts/collect.mjs'
+      - 'scripts/history-lib.mjs'
+      - 'scripts/lib.mjs'
       - '.github/workflows/pages.yml'
+  schedule:
+    # Every six hours. A finished UTC day stays readable on the canary until
+    # midnight the next day, so up to three missed runs lose nothing.
+    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write # push history.json to the data branch
   pages: write
   id-token: write
 
+# Runs queue instead of cancelling each other: two collectors must not race on
+# the data branch, and a half-finished one would skip a deploy.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -25,6 +36,54 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check out the data branch
+        run: |
+          set +e
+          git ls-remote --exit-code --heads origin data > /dev/null
+          found=$?
+          set -e
+          if [ "$found" = 0 ]; then
+            git fetch --depth=1 origin data
+            git worktree add --detach data FETCH_HEAD
+          elif [ "$found" = 2 ]; then
+            # First run: start an empty branch with no history of its own.
+            git worktree add --detach data
+            git -C data checkout --orphan data
+            git -C data rm -rfq .
+          else
+            echo "Could not read the branches of origin (git ls-remote exit $found)." >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --omit=dev
+
+      # If the RPC is down, the page is still published with the history it has.
+      - name: Collect the daily history
+        continue-on-error: true
+        run: node scripts/collect.mjs --out data
+
+      - name: Save the history on the data branch
+        working-directory: data
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing new."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898898+github-actions[bot]@users.noreply.github.com' \
+            commit -q -m "history: $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push origin HEAD:refs/heads/data
+
+      - name: Add the history to the page
+        run: |
+          shopt -s nullglob
+          for f in data/*.json; do cp "$f" site/; done
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

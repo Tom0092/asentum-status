@@ -4,3 +4,4 @@ deploy-state.json
 heartbeat-state.json
 *.log
 .DS_Store
+site/history.json
