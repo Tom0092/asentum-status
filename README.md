@@ -60,7 +60,7 @@ test/        SES test runtime, contract tests, mock node, end-to-end tests
 ## Operators: name your validator
 
 Your validator is on the page already if it is bonded. Registering adds your
-name: one transaction from a small separate wallet (Node.js 18 or newer).
+name: one transaction from a small separate wallet (Node.js 20 or newer).
 
 ```sh
 git clone https://github.com/Tom0092/asentum-status && cd asentum-status
