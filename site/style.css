@@ -696,6 +696,21 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.op-onchain svg {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  margin-left: 0.3rem;
+  vertical-align: -0.1em;
+}
+
+.op-claim {
+  margin-left: 0.4rem;
+  color: var(--ink-2);
+  font-size: var(--step--1);
+  font-weight: 400;
+}
+
 .op-addr,
 .op-sub {
   display: block;

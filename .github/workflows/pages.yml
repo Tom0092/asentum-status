@@ -9,6 +9,7 @@ on:
       - 'site/**'
       - 'scripts/collect.mjs'
       - 'scripts/history-lib.mjs'
+      - 'scripts/names-lib.mjs'
       - 'scripts/lib.mjs'
       - '.github/workflows/pages.yml'
   schedule:
@@ -63,7 +64,7 @@ jobs:
       - run: npm ci --omit=dev
 
       # If the RPC is down, the page is still published with the history it has.
-      - name: Collect the daily history
+      - name: Collect the daily history and the validator names
         continue-on-error: true
         run: node scripts/collect.mjs --out data
 

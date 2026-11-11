@@ -301,6 +301,7 @@ export function signingStatus(v, live, state) {
 
 export function buildRows(state, now) {
   const ops = state.ops || [];
+  const names = state.names || {};
   const liveMap = new Map((state.live?.tracked || []).map((e) => [toAse1(e.address), e]));
   const opByValidator = new Map(ops.filter((o) => o.validator).map((o) => [toAse1(o.validator), o]));
   const rows = [];
@@ -309,7 +310,8 @@ export function buildRows(state, now) {
     const sig = v || op?.validator ? signingStatus(v, v ? liveMap.get(address) : null, state) : null;
     const hb = op && Number(op.interval) > 0 ? opStatus(op, now) : null;
     const rank = Math.min(sig ? RANK[sig.level] : 9, hb ? RANK[hb.level] : 9);
-    return { address, v, op, sig, hb, rank, stake: v ? BigInt(v.stake || '0') : 0n };
+    const chainName = (address && names[address]) || null;
+    return { address, v, op, chainName, sig, hb, rank, stake: v ? BigInt(v.stake || '0') : 0n };
   };
   for (const v of state.part?.validators || []) {
     const a = toAse1(v.address);
@@ -320,13 +322,36 @@ export function buildRows(state, now) {
   for (const op of ops) {
     if (!placed.has(op.addr)) rows.push(make(op.validator ? toAse1(op.validator) : '', null, op));
   }
+  const named = (r) => Number(Boolean(r.op || r.chainName));
+  const label = (r) => r.chainName || r.op?.name || r.address;
   return rows.sort(
     (a, b) =>
       a.rank - b.rank ||
-      Number(Boolean(b.op)) - Number(Boolean(a.op)) ||
+      named(b) - named(a) ||
       (b.stake > a.stake ? 1 : b.stake < a.stake ? -1 : 0) ||
-      (a.op?.name || a.address).localeCompare(b.op?.name || b.address),
+      label(a).localeCompare(label(b)),
   );
+}
+
+// What the name column shows. A primary @name from the chain's name service
+// was chosen with the validator's own key; a registry name is whatever the
+// registering wallet typed. Neither says who runs the node.
+export function nameView(r) {
+  if (r.chainName) {
+    const other = r.op && r.op.name.toLowerCase() !== r.chainName.toLowerCase();
+    return { name: `@${r.chainName}`, onChain: true, note: other ? `Listed here as ${r.op.name} (self-declared)` : null };
+  }
+  if (r.op) return { name: r.op.name, onChain: false, note: null };
+  return null;
+}
+
+// Search over both names, the validator and the heartbeat wallet. A leading
+// @ is ignored, so "@name" finds a chain name.
+export function matchesQuery(r, query) {
+  const q = query.trim().toLowerCase().replace(/^@/, '');
+  if (!q) return true;
+  const fields = [r.chainName, r.op?.name, r.address, r.op ? toAse1(r.op.addr) : ''];
+  return fields.some((f) => (f || '').toLowerCase().includes(q));
 }
 
 export const FILTERS = {
@@ -334,7 +359,7 @@ export const FILTERS = {
   problems: (r) => r.rank <= 1,
   signing: (r) => r.sig?.key === 'signing',
   outside: (r) => r.sig?.key === 'outside',
-  named: (r) => Boolean(r.op),
+  named: (r) => Boolean(r.op || r.chainName),
 };
 
 // Where an offline node stopped, read from the chain. A stuck node can still call itself

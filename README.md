@@ -29,7 +29,9 @@ anything for that.
 signatures can't:
 
 - **Names.** An operator registers once and their validator shows with a name
-  instead of a bare address. One name per validator.
+  instead of a bare address. One name per validator. A validator whose
+  address has a primary @name in the chain's own name service shows that
+  name anyway (see below).
 - **Heartbeats (optional).** A tiny `beat` transaction every few minutes from
   the node's machine. Useful for validators outside the committee, which sign
   nothing and are otherwise invisible, and for anyone who wants to know their
@@ -42,7 +44,10 @@ Pages workflow runs `scripts/collect.mjs`, which folds each finished UTC day
 into one row (ticks, minutes without a tick, longest gap, blocks, block time),
 keeps every stall and samples how many validators sign. It keeps 90 days in
 `history.json` on the branch `data` and publishes the file next to the page.
-Only the workflow writes to `data`; don't commit there.
+Once a day the same run looks up every validator's primary @name
+(`/name-of/<address>` on the node, about 1,100 lookups in under a minute) and
+writes the ones it finds to `names.json`. Only the workflow writes to `data`;
+don't commit there.
 
 **The page** (`site/`) shows the verdict, blocks per minute for the last two
 hours, the last 48 hours and the last 90 days of stalls and block times, and
@@ -63,16 +68,19 @@ contracts/   heartbeat-registry.js, canary.js   (deployed as plain JS source)
 site/        the status page (static; logic.js does the arithmetic, app.js draws;
              vendor/ holds the bundled @asentum/sdk)
 sender/      heartbeat.mjs CLI and systemd unit, timer and env example
-scripts/     keygen.mjs, deploy.mjs, check.mjs, collect.mjs (daily history),
-             shared helpers
+scripts/     keygen.mjs, deploy.mjs, check.mjs, collect.mjs (daily history and
+             chain names), shared helpers
 test/        SES test runtime, contract tests, mock node, end-to-end tests,
              page logic tests
 ```
 
 ## Operators: name your validator
 
-Your validator is on the page already if it is bonded. Registering adds your
-name: one transaction from a small separate wallet (Node.js 20 or newer).
+Your validator is on the page already if it is bonded. If its address has a
+primary @name in Asentum's name service, the page shows that name with a
+check mark (looked up once a day), and you don't need the registry. Otherwise
+registering adds your name: one transaction from a small separate wallet
+(Node.js 20 or newer).
 
 ```sh
 git clone https://github.com/Tom0092/asentum-status && cd asentum-status
@@ -212,10 +220,16 @@ The page accepts overrides in the URL: `?rpc=…&registry=…&canary=…`, and
   them.
 - Heartbeats show that a transaction from your machine lands. They don't
   replace your node's own metrics.
-- **Names are claims, not proof.** The registry does not check that you
-  operate the validator you name. Anyone can put a name on any validator
-  first, and the real operator then gets "this validator already has a
-  name". Report it; the owner removes the entry with `removeOperator`.
+- **Registry names are claims; chain names show who holds the key.** A
+  primary @name from the chain's name service was set with the validator's
+  own key, so the page shows it first, with a check mark. It still says
+  nothing about who that is: anyone can pick any free name. A name in this
+  registry is whatever the registering wallet typed; the registry does not
+  check that you operate the validator you name, so the page marks it
+  "self-declared". Anyone can put a name on any validator first, and the
+  real operator then gets "this validator already has a name". Report it;
+  the owner removes the entry with `removeOperator`. Chain names cannot be
+  removed from here.
 - **Extra canary jobs count.** Anyone can schedule another cron job on
   `tick()`. Runs within half an interval of the last tick are ignored, but a
   second job offset by 30 s or more doubles the ticks: the hourly "minutes

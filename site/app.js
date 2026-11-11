@@ -20,6 +20,8 @@ import {
   daySlots,
   mergeIncidents,
   buildRows,
+  nameView,
+  matchesQuery,
   stopHint,
   FILTERS,
 } from './logic.js';
@@ -101,6 +103,15 @@ function chainSource() {
       const h = await r.json();
       return h.canary === cfg.canary ? h : null;
     },
+    // Primary @names of validators, also from the Pages workflow. They
+    // belong to the configured network, not to one given in the URL.
+    async names() {
+      const r = await fetch('names.json', { cache: 'no-cache' });
+      if (r.status === 404) return null;
+      if (!r.ok) throw new Error(`names.json: HTTP ${r.status}`);
+      const n = await r.json();
+      return n.rpc === cfg.rpc ? n.names : null;
+    },
   };
 }
 
@@ -114,6 +125,7 @@ const state = {
   part: null,
   live: null,
   history: null,
+  names: null,
   finalSeen: null,
   errors: {},
   updatedAt: 0,
@@ -152,6 +164,10 @@ const ICONS = {
   neutral: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.6" fill="none" stroke="var(--muted)" stroke-width="1.6"/></svg>',
   unknown: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.6" fill="none" stroke="var(--muted)" stroke-width="1.6"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.2-.8.6-.8 1.1v.4" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="11.6" r=".9" fill="var(--muted)"/></svg>',
 };
+
+// A plain check, unlike the status icons, so it does not read as "signing".
+const ONCHAIN_ICON =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.8 8.6l3.4 3.3 7-7.6" fill="none" stroke="var(--series)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 function statusEl(level, label) {
   const span = document.createElement('span');
@@ -809,10 +825,7 @@ function renderValidators(now, networkLevel) {
     n.textContent = fmtInt(rows.filter(FILTERS[n.dataset.count] || FILTERS.all).length);
   });
 
-  const q = query.trim().toLowerCase();
-  const matches = rows
-    .filter(FILTERS[filter] || FILTERS.all)
-    .filter((r) => !q || (r.op?.name || '').includes(q) || r.address.includes(q) || (r.op && toAse1(r.op.addr).includes(q)));
+  const matches = rows.filter(FILTERS[filter] || FILTERS.all).filter((r) => matchesQuery(r, query));
   const shown = matches.slice(0, showCount);
 
   empty.hidden = matches.length > 0;
@@ -829,16 +842,34 @@ function renderValidators(now, networkLevel) {
     const tr = body.insertRow();
 
     const who = cell(tr, 'c-name');
-    if (r.op) {
+    const view = nameView(r);
+    if (view) {
       const nm = document.createElement('span');
       nm.className = 'op-name';
-      nm.textContent = r.op.name;
+      nm.textContent = view.name;
+      const mark = document.createElement('span');
+      if (view.onChain) {
+        // Proves the key holder chose the name, not who they are.
+        nm.title = "Set on chain with this validator's own key";
+        mark.className = 'op-onchain';
+        mark.innerHTML = ONCHAIN_ICON; // constant markup only
+        const sr = document.createElement('span');
+        sr.className = 'visually-hidden';
+        sr.textContent = ", set on chain with the validator's own key";
+        mark.append(sr);
+      } else {
+        mark.className = 'op-claim';
+        mark.title = 'Typed in by whoever registered it here; not checked against the validator';
+        mark.textContent = 'self-declared';
+      }
+      nm.append(mark);
       who.append(nm);
       if (r.address) {
         const link = explorerLink(r.address);
         link.classList.add('op-addr');
         who.append(link);
       }
+      if (view.note) who.append(sub(view.note));
     } else {
       const link = explorerLink(r.address);
       link.classList.add('op-name', 'op-anon');
@@ -928,8 +959,9 @@ const SLOW_MS = 2 * MIN;
 // history (about 180 KB and seconds of work on the node) are the big responses.
 // Keep the canary at a minute: verdict() warns once the last tick looks older than
 // three intervals, and the time between reads adds to that age.
-// history.json comes from the page's own host and changes every six hours.
-const EVERY = { canary: MIN, ops: 2 * MIN, part: 10 * MIN, live: 2 * MIN, history: 30 * MIN };
+// history.json and names.json come from the page's own host and change every
+// six hours at most.
+const EVERY = { canary: MIN, ops: 2 * MIN, part: 10 * MIN, live: 2 * MIN, history: 30 * MIN, names: 30 * MIN };
 const lastTry = {};
 let failures = 0;
 let timer = null;
@@ -963,6 +995,7 @@ async function poll() {
   if (due('part', t)) jobs.push(load('part', source.participation));
   if (due('live', t)) jobs.push(load('live', source.liveness));
   if (due('history', t)) jobs.push(load('history', source.history));
+  if (due('names', t)) jobs.push(load('names', source.names));
   document.querySelectorAll('.plot').forEach((p) => p.classList.add('refreshing'));
   await Promise.allSettled(jobs);
   if (state.heads) state.finalSeen = nextFinality(state.finalSeen, state.heads.finalized, source.now());

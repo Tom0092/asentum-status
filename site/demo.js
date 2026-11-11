@@ -1,5 +1,6 @@
 // Made-up data for ?demo, so the page can be previewed before the contracts
 // are deployed. Shapes match what the contracts and the SDK return.
+import { toAse1 } from './vendor/asentum-sdk.js';
 
 const MIN = 60000;
 const HOUR = 3600000;
@@ -217,6 +218,16 @@ export function createDemoSource() {
     return { version: 1, updated: now - 2 * HOUR - 17 * MIN, canary: '', intervalMs: MIN, days, incidents, signing };
   }
 
+  // Primary @names from the chain: a few anonymous validators, one operator
+  // whose registry name matches and one whose registry name differs.
+  function names() {
+    const n = { [toAse1(hex(0xfa00b1))]: 'bavaria-1', [toAse1(hex(0xfa00b2))]: 'aurora-staking' };
+    ['northwind', 'quietpeak', 'valdemar', 'blocksmith', 'kestrel-node'].forEach((name, i) => {
+      n[toAse1(hex(0xee0000 + 2 + i * 7))] = name;
+    });
+    return n;
+  }
+
   const wait = (v) => new Promise((res) => setTimeout(() => res(v), 120));
 
   return {
@@ -234,5 +245,6 @@ export function createDemoSource() {
     participation: () => wait(participation(Date.now())),
     liveness: () => wait(liveness(Date.now())),
     history: () => wait(history(Date.now())),
+    names: () => wait(names()),
   };
 }
