@@ -36,7 +36,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check out the data branch
         run: |
@@ -57,7 +57,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -85,8 +85,8 @@ jobs:
           shopt -s nullglob
           for f in data/*.json; do cp "$f" site/; done
 
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
       # deploy-pages sometimes cannot list the artifact uploaded a moment
@@ -95,10 +95,10 @@ jobs:
       # hours away: try once more after a minute.
       - id: deployment
         continue-on-error: true
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
       - name: Wait before the second deploy attempt
         if: steps.deployment.outcome == 'failure'
         run: sleep 60
       - id: deployment-retry
         if: steps.deployment.outcome == 'failure'
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
