@@ -1,12 +1,13 @@
 {
   "version": 1,
-  "updated": 1794608629973,
+  "updated": 1794637126800,
   "canary": "ase1493mvlvxg8h2tsj64wdx2n58sxf2nks4l4hrcr",
   "intervalMs": 60000,
   "days": [
     {"day":"2026-11-10","ticks":1440,"missedMin":0,"maxGapMs":70000,"blocks":33850,"blockMs":2552.4},
     {"day":"2026-11-11","ticks":1440,"missedMin":0,"maxGapMs":70000,"blocks":34841,"blockMs":2480},
-    {"day":"2026-11-12","ticks":1440,"missedMin":0,"maxGapMs":74000,"blocks":32212,"blockMs":2682.2}
+    {"day":"2026-11-12","ticks":1440,"missedMin":0,"maxGapMs":74000,"blocks":32212,"blockMs":2682.2},
+    {"day":"2026-11-13","ticks":1440,"missedMin":0,"maxGapMs":74000,"blocks":33900,"blockMs":2548.6}
   ],
   "incidents": [
     {"from":1793167405086,"to":1793170391086,"gap":2986000,"fromBlock":859651,"toBlock":859661},
@@ -18,6 +19,7 @@
   "signing": [
     {"day":"2026-11-11","runs":1,"signing":83,"total":1133},
     {"day":"2026-11-12","runs":2,"signing":158,"total":2275},
-    {"day":"2026-11-13","runs":4,"signing":416,"total":4617}
+    {"day":"2026-11-13","runs":4,"signing":416,"total":4617},
+    {"day":"2026-11-14","runs":1,"signing":90,"total":1155}
   ]
 }
