@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": 1794901933028,
+  "updated": 1794948788492,
   "canary": "ase1493mvlvxg8h2tsj64wdx2n58sxf2nks4l4hrcr",
   "intervalMs": 60000,
   "days": [
@@ -26,6 +26,6 @@
     {"day":"2026-11-14","runs":3,"signing":300,"total":3477},
     {"day":"2026-11-15","runs":2,"signing":227,"total":2331},
     {"day":"2026-11-16","runs":2,"signing":227,"total":2363},
-    {"day":"2026-11-17","runs":1,"signing":84,"total":1193}
+    {"day":"2026-11-17","runs":2,"signing":182,"total":2393}
   ]
 }
