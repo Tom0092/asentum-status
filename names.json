@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "updated": 1795728549147,
+  "updated": 1795814101249,
   "rpc": "https://testnet.asentum.com",
-  "checked": 1244,
+  "checked": 1247,
   "names": {
     "ase1083efm5w0wje9h5652eza7566s598vhzxvy59g": "mumu",
     "ase10dswc765ds7202eryg4gtueqrr88tcngme4d5k": "xbeelzez",
@@ -34,6 +34,7 @@
     "ase15h4g86xzwcc0swtnys9x7wxzzkh6tdes2ry7rw": "jasonn",
     "ase15p9ta8ucckede5xz5pxju9xlpm7jkccqfqpusq": "muhlis",
     "ase15qdma37xpcjdevnsvecj2n94mukefxdveh3t9m": "mrsaepudin40",
+    "ase15wla6rnn3kjw9px23wf6rhmvjt9xjndefwdtg7": "filip709",
     "ase15x6skppu2k4en8s4zhkn8yvxsr5dpuhp68n45v": "umahnh",
     "ase160ahym0n90nllsc2x5txtzufpmfugt8w728mtg": "use120",
     "ase165ph8lmvnws6d2sysmuz65f47t6kqq5w5qhxk0": "olegzar",
@@ -241,7 +242,6 @@
     "ase1z29cv8kcu87ycmf5pp2wvshxlqmkh324z0ynw0": "koopiche",
     "ase1z7v7jtk3v82rhc8p00ex38ywznp4gr5ju6wdcv": "diawana",
     "ase1zca8ukf2pywlz9s4pfe4c7ws8tmz4x7d5z8auf": "yeager",
-    "ase1zd73dmckrw7p0r56gar0h8klepxfyctdnppqva": "eziohara",
     "ase1zdgye7mpm85c39lcjhzznkunjkx4gh96pxzjn2": "masixone",
     "ase1zezec5repm0eyaa68vuhshemctsvg9l3jnuhtg": "purify4893",
     "ase1zfch0ah64cln0e9y52x9pul8fewfd794wyxswn": "amandanukamalia",
