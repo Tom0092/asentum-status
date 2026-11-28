@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": 1795814101249,
+  "updated": 1795851858209,
   "canary": "ase1493mvlvxg8h2tsj64wdx2n58sxf2nks4l4hrcr",
   "intervalMs": 60000,
   "days": [
@@ -20,14 +20,23 @@
     {"day":"2026-11-23","ticks":1440,"missedMin":0,"maxGapMs":72000,"blocks":35573,"blockMs":2428.8},
     {"day":"2026-11-24","ticks":1440,"missedMin":0,"maxGapMs":82000,"blocks":35513,"blockMs":2432.9},
     {"day":"2026-11-25","ticks":1440,"missedMin":0,"maxGapMs":80000,"blocks":35659,"blockMs":2423},
-    {"day":"2026-11-26","ticks":1440,"missedMin":0,"maxGapMs":76000,"blocks":35208,"blockMs":2453.9}
+    {"day":"2026-11-26","ticks":1440,"missedMin":0,"maxGapMs":76000,"blocks":35208,"blockMs":2453.9},
+    {"day":"2026-11-27","ticks":1440,"missedMin":0,"maxGapMs":78000,"blocks":34677,"blockMs":2491.6}
   ],
   "incidents": [
     {"from":1793167405086,"to":1793170391086,"gap":2986000,"fromBlock":859651,"toBlock":859661},
     {"from":1793180907086,"to":1793181301086,"gap":394000,"fromBlock":862808,"toBlock":862811},
     {"from":1793181301086,"to":1793181781086,"gap":480000,"fromBlock":862811,"toBlock":862815},
     {"from":1793200105086,"to":1793201207086,"gap":1102000,"fromBlock":866920,"toBlock":866933},
-    {"from":1793254235086,"to":1793254467086,"gap":232000,"fromBlock":882312,"toBlock":882315}
+    {"from":1793254235086,"to":1793254467086,"gap":232000,"fromBlock":882312,"toBlock":882315},
+    {"from":1795829785086,"to":1795830159086,"gap":374000,"fromBlock":1922246,"toBlock":1922248},
+    {"from":1795832877086,"to":1795833809086,"gap":932000,"fromBlock":1922371,"toBlock":1922372},
+    {"from":1795835005086,"to":1795835939086,"gap":934000,"fromBlock":1922398,"toBlock":1922400},
+    {"from":1795839051086,"to":1795840913086,"gap":1862000,"fromBlock":1922542,"toBlock":1922544},
+    {"from":1795841389086,"to":1795842157086,"gap":768000,"fromBlock":1922557,"toBlock":1922559},
+    {"from":1795844929086,"to":1795846047086,"gap":1118000,"fromBlock":1922675,"toBlock":1922676},
+    {"from":1795846467086,"to":1795846709086,"gap":242000,"fromBlock":1922690,"toBlock":1922691},
+    {"from":1795850377086,"to":1795851339086,"gap":962000,"fromBlock":1922822,"toBlock":1922824}
   ],
   "signing": [
     {"day":"2026-11-11","runs":1,"signing":83,"total":1133},
